@@ -28,6 +28,10 @@
       <HintPath>$(PortalDir)\Intalio.Case.Portal.Core.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Intalio.Core">
+      <HintPath>$(PortalDir)\Intalio.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Newtonsoft.Json">
       <HintPath>$(PortalDir)\Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>

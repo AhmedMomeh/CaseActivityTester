@@ -150,6 +150,12 @@ namespace ActivityTester
             }
 
             const bool dumpAttachmentModel = false;
+            const bool dumpAsposeLicense = false;
+            if (dumpAsposeLicense)
+            {
+                DumpType("Intalio.Core.Utility.AsposeLicense");
+                return 0;
+            }
             if (dumpAttachmentModel)
             {
                 try { System.Reflection.Assembly.LoadFile(@"C:\Program Files\Intalio\UC_StorageFileSystem\Intalio.Storage.FileSystem.Core.dll"); } catch (Exception e) { Console.WriteLine("load AttachmentModel asm: " + e.Message); }
