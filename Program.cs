@@ -1,0 +1,421 @@
+using Intalio.Case.Core.Objects;
+using Intalio.Case.Core.Templates;
+using Intalio.Case.Portal.Core.DAL;
+using Microsoft.Data.SqlClient;
+using Shared.Activities;
+using System;
+using System.IO;
+using System.Reflection;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Loader;
+
+namespace ActivityTester
+{
+    internal static class PortalResolver
+    {
+        public const string PortalDir = @"C:\Program Files\Intalio\UC_CasePortal";
+
+        private static readonly string NativeDir =
+            Path.Combine(PortalDir, "runtimes", Rid(), "native");
+
+        // Managed-assembly probe order. RID-specific paths come FIRST because for
+        // some packages (e.g. Microsoft.Data.SqlClient) the flat-folder DLL is a
+        // PlatformNotSupported stub and the real implementation lives under
+        // runtimes/<rid>/lib/<tfm>/. We probe net8 → net7 → net6 to mirror the way
+        // the runtime would pick the closest-compatible TFM.
+        private static readonly string[] ProbeDirs = BuildProbeDirs();
+
+        // Runs before any other code in this assembly, including Main. Registering the
+        // probe here ensures Intalio types referenced by Main's signature can be loaded.
+        [ModuleInitializer]
+        internal static void Init()
+        {
+            AssemblyLoadContext.Default.Resolving += (ctx, asmName) =>
+            {
+                foreach (var dir in ProbeDirs)
+                {
+                    string candidate = Path.Combine(dir, asmName.Name + ".dll");
+                    if (File.Exists(candidate))
+                        return ctx.LoadFromAssemblyPath(candidate);
+                }
+                return null;
+            };
+
+            // Native deps (Microsoft.Data.SqlClient.SNI, libSkiaSharp, harfbuzz, etc.)
+            // live under runtimes/<rid>/native in the Portal install. Map P/Invoke
+            // lookups there.
+            AssemblyLoadContext.Default.ResolvingUnmanagedDll += (assembly, libraryName) =>
+            {
+                if (!Directory.Exists(NativeDir)) return IntPtr.Zero;
+                foreach (var name in new[] { libraryName, libraryName + ".dll" })
+                {
+                    string p = Path.Combine(NativeDir, name);
+                    if (File.Exists(p) && NativeLibrary.TryLoad(p, out var handle))
+                        return handle;
+                }
+                return IntPtr.Zero;
+            };
+        }
+
+        private static string[] BuildProbeDirs()
+        {
+            string os = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win" :
+                        RuntimeInformation.IsOSPlatform(OSPlatform.Linux)   ? "linux" :
+                        RuntimeInformation.IsOSPlatform(OSPlatform.OSX)     ? "osx" : "unix";
+            string rid = Rid();
+            var dirs = new System.Collections.Generic.List<string>();
+            // RID/<tfm> — preferred (real impls live here)
+            foreach (var family in new[] { rid, os, "unix" })
+            foreach (var tfm    in new[] { "net8.0", "net7.0", "net6.0" })
+                dirs.Add(Path.Combine(PortalDir, "runtimes", family, "lib", tfm));
+            // Flat folder — last (often only the stub for platform-specific packages)
+            dirs.Add(PortalDir);
+            return dirs.ToArray();
+        }
+
+        private static string Rid()
+        {
+            string os =
+                RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win" :
+                RuntimeInformation.IsOSPlatform(OSPlatform.Linux)   ? "linux" :
+                RuntimeInformation.IsOSPlatform(OSPlatform.OSX)     ? "osx" : "unknown";
+            string arch = RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X64   => "x64",
+                Architecture.X86   => "x86",
+                Architecture.Arm64 => "arm64",
+                Architecture.Arm   => "arm",
+                _                  => "x64",
+            };
+            return $"{os}-{arch}";
+        }
+    }
+
+    internal static class Program
+    {
+        private static int Main(string[] args)
+        {
+            // Work from the Portal directory so the data layer finds appsettings.json,
+            // license files, and native dependencies exactly the way the Portal does.
+            Directory.SetCurrentDirectory(PortalResolver.PortalDir);
+
+            // The Portal's Startup populates static Configuration props from appsettings.json.
+            // We replicate the minimum the activity needs. (Calling ConfigureSystem() would
+            // also run EF migrations against the live DB, which we don't want from a debug tool.)
+            Intalio.Case.Core.Configuration.DbConnectionString =
+                "Server=.;Database=UC_Case;MultipleActiveResultSets=true;Integrated Security=True;TrustServerCertificate=true;";
+            Intalio.Case.Portal.Core.Configuration.StorageServerUrl = "http://localhost:44444/";
+
+            // ===== TEMP DIAGNOSTIC: where are the attachments for this document? =====
+            // Flip to true to dump every Attachment lookup method + raw SQL for one doc.
+            const bool runAttachmentDiagnostic = false;
+            if (runAttachmentDiagnostic)
+            {
+                DiagnoseAttachments(documentId: 19);
+                return 0;
+            }
+            // =========================================================================
+
+            // ===== TEMP DIAGNOSTIC: dump ManageAttachment methods so we can pick the
+            // right Get-bytes / Replace overload without guessing.  Flip to true once,
+            // copy the printed signatures into the activity, then flip back to false.
+            const bool dumpManageAttachment = false;
+            if (dumpManageAttachment)
+            {
+                // Resolve the actual generic-argument return type of GetAttachmentData.
+                DumpReturnTaskType("Intalio.Case.Portal.Core.API.ManageAttachment", "GetAttachmentData");
+                // FileViewModel: the bytes carrier for Replace().
+                FindType("FileViewModel");
+                return 0;
+            }
+
+            const bool dumpStorageHelpers = false;
+            if (dumpStorageHelpers)
+            {
+                DumpType("Intalio.Core.Helper");
+                DumpType("Intalio.Case.Portal.Core.Configuration");
+                DumpType("Intalio.Case.Portal.Core.DAL.Document", grep: "Find|Created|User|Structure|Group");
+                return 0;
+            }
+
+            const bool dumpUserPerms = false;
+            if (dumpUserPerms)
+            {
+                DumpType("Intalio.Case.Portal.Core.DAL.Users", grep: "Structure|Group|Find|Id");
+                FindType("UserStructure");
+                FindType("UserGroup");
+                return 0;
+            }
+
+            const bool dumpStructureGroup = false;
+            if (dumpStructureGroup)
+            {
+                FindType("Structure");
+                FindType("Group");
+                DumpType("Intalio.Case.Portal.Core.DAL.Structure", grep: "ListBy|FindBy|UserId|Ids");
+                DumpType("Intalio.Case.Portal.Core.DAL.Group",     grep: "ListBy|FindBy|UserId|Ids");
+                return 0;
+            }
+            // =========================================================================
+
+            // ===================================================================
+            //                EDIT THE TEST CASE BELOW
+            // ===================================================================
+            // 1) Pick the activity to run (uncomment one).
+            // 2) Set the workflow item properties you want to feed in.
+            // 3) Press F5 in Visual Studio (or run Run.cmd from this folder).
+            // ===================================================================
+
+            //ActivityTemplate activity = new ArchiveEmployeeDocumentActivity();
+            //ActivityTemplate activity = new ArchiveResumeActivity();
+            //ActivityTemplate activity = new ChangeStatusToClosedActivity();
+            //ActivityTemplate activity = new HRRouteContractByGradeActivity();
+            //ActivityTemplate activity = new NextApprovalRoleActivity();
+            //ActivityTemplate activity = new IPO_IssuanceOfPurchaseOrder_RouteByAmountActivity();
+            ActivityTemplate activity = new StampApprovedDocumentsActivity();
+
+            var props = new PropertyCollection
+            {
+                // For StampApprovedDocumentsActivity:
+                new Property { Name = "DocumentId",    Value = "33" },
+                new Property { Name = "requesterName", Value = "Ahmed Momeh" },
+
+                // For ArchiveEmployeeDocumentActivity:
+                //new Property { Name = "DocumentId",       Value = "24" },
+                //new Property { Name = "EmployeeId",       Value = "3"   },
+                //new Property { Name = "DocumentCategory", Value = "Letters" },
+
+                // For HRRouteContractByGradeActivity use these instead:
+                //new Property { Name = "grade",            Value = "A" },
+                //new Property { Name = "nextApprovalRole", Value = ""  },
+            };
+
+            // ===================================================================
+
+            var item = new WorkflowItem { Properties = props };
+
+            Console.WriteLine($"==> Running {activity.GetType().FullName}");
+            foreach (var p in props) Console.WriteLine($"    {p.Name} = {p.Value}");
+
+            try
+            {
+                activity.Execute(item);
+                Console.WriteLine("==> Execute completed.");
+
+                activity.Complete(item);
+                Console.WriteLine("==> Complete completed.");
+
+                Console.WriteLine("Final properties after run:");
+                foreach (var p in item.Properties) Console.WriteLine($"    {p.Name} = {p.Value}");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("==> FAILED");
+                DumpException(ex);
+                return 1;
+            }
+        }
+
+        private static void DiagnoseAttachments(long documentId)
+        {
+            Console.WriteLine($"\n===== Attachment diagnostic for DocumentId = {documentId} =====\n");
+
+            // 1) Each DAL lookup method, with its specific filter.
+            try
+            {
+                var a = new Attachment();
+                DumpList("Attachment.FindByDocumentId (excludes original)",        a.FindByDocumentId(documentId));
+                DumpList("Attachment.FindNonAdditionalByDocumentId (only original)", a.FindNonAdditionalByDocumentId(documentId));
+                DumpList("Attachment.ListOriginalDocumentByDocumentId (original+additional)", a.ListOriginalDocumentByDocumentId(documentId));
+            }
+            catch (Exception ex) { Console.Error.WriteLine("DAL probe failed: " + ex.Message); }
+
+            // 2) Raw SQL: count every row in Attachment for this document and any task
+            //    that belongs to it. This is the ground truth — no filters applied.
+            try
+            {
+                using var conn = new SqlConnection(Intalio.Case.Core.Configuration.DbConnectionString);
+                conn.Open();
+
+                Console.WriteLine("\n--- raw Attachment rows where DocumentId = @id ---");
+                DumpSql(conn,
+                    @"SELECT Id, DocumentId, TaskId, Name, [Type], IsAdditional, Status, IsLocked, Size
+                      FROM Attachment WHERE DocumentId = @id",
+                    documentId);
+
+                Console.WriteLine("\n--- raw Attachment rows linked via Task that belongs to this Document ---");
+                DumpSql(conn,
+                    @"SELECT a.Id, a.DocumentId, a.TaskId, a.Name, a.[Type], a.IsAdditional, a.Status, a.IsLocked, a.Size
+                      FROM Attachment a
+                      INNER JOIN Task t ON t.Id = a.TaskId
+                      WHERE t.DocumentId = @id",
+                    documentId);
+
+                Console.WriteLine("\n--- DocumentTypes / form-attachment data for this Document ---");
+                DumpSql(conn,
+                    @"SELECT dt.Id AS DocumentTypeId, dt.Name, dt.DocumentTypesAttachmentDataId,
+                              CASE WHEN ad.Data IS NULL THEN 0 ELSE DATALENGTH(ad.Data) END AS BytesLen
+                       FROM DocumentTypes dt
+                       LEFT JOIN DocumentTypesAttachmentData ad ON ad.Id = dt.DocumentTypesAttachmentDataId
+                       WHERE dt.DocumentTypeBaseId IN (SELECT DocumentTypeBaseId FROM Document WHERE Id = @id)",
+                    documentId);
+            }
+            catch (Exception ex) { Console.Error.WriteLine("\nSQL probe failed: " + ex.Message); }
+        }
+
+        private static void DumpList(string label, System.Collections.Generic.IEnumerable<Attachment> items)
+        {
+            int n = 0;
+            Console.WriteLine($"\n[{label}]");
+            foreach (var a in items)
+            {
+                Console.WriteLine($"  id={a.Id}  name={a.Name}  type={a.Type}  isAdditional={a.IsAdditional}  status={a.Status}  taskId={a.TaskId}  docId={a.DocumentId}");
+                n++;
+            }
+            if (n == 0) Console.WriteLine("  (none)");
+            Console.WriteLine($"  -> count: {n}");
+        }
+
+        private static void DumpSql(SqlConnection conn, string sql, long id)
+        {
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@id", id);
+            try
+            {
+                using var rdr = cmd.ExecuteReader();
+                int n = 0;
+                while (rdr.Read())
+                {
+                    if (n == 0)
+                    {
+                        for (int i = 0; i < rdr.FieldCount; i++) Console.Write($"{rdr.GetName(i),-22}");
+                        Console.WriteLine();
+                    }
+                    for (int i = 0; i < rdr.FieldCount; i++)
+                    {
+                        var v = rdr.IsDBNull(i) ? "NULL" : rdr.GetValue(i).ToString();
+                        Console.Write($"{v,-22}");
+                    }
+                    Console.WriteLine();
+                    n++;
+                }
+                Console.WriteLine($"  -> rows: {n}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("  query error: " + ex.Message);
+            }
+        }
+
+        private static void FindType(string simpleName)
+        {
+            Console.WriteLine($"\n===== Searching for type by simple name: {simpleName} =====");
+            try { System.Reflection.Assembly.Load("Intalio.Case.Portal.Core"); } catch { }
+            try { System.Reflection.Assembly.Load("Intalio.Case.Core"); } catch { }
+            foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try { types = a.GetTypes(); } catch { continue; }
+                foreach (var t in types)
+                {
+                    if (t.Name == simpleName)
+                    {
+                        Console.WriteLine($"  FOUND: {t.FullName}");
+                        foreach (var p in t.GetProperties().OrderBy(p => p.Name))
+                            Console.WriteLine($"    {p.PropertyType.Name}  {p.Name}");
+                    }
+                }
+            }
+        }
+
+        private static Type ResolveType(string fullName)
+        {
+            try { System.Reflection.Assembly.Load("Intalio.Case.Portal.Core"); } catch { }
+            try { System.Reflection.Assembly.Load("Intalio.Case.Core"); } catch { }
+            foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try { var x = a.GetType(fullName, false); if (x != null) return x; } catch { }
+            }
+            // last resort: search by simple name
+            foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try { foreach (var x in a.GetTypes()) if (x.FullName == fullName) return x; } catch { }
+            }
+            return null;
+        }
+
+        private static void DumpReturnTaskType(string typeName, string methodName)
+        {
+            var t = ResolveType(typeName);
+            if (t == null) { Console.WriteLine($"({typeName} not found)"); return; }
+            foreach (var m in t.GetMethods()) if (m.Name == methodName)
+            {
+                var ret = m.ReturnType;
+                Type inner = ret.IsGenericType ? ret.GetGenericArguments()[0] : ret;
+                Console.WriteLine($"\n[{typeName}.{methodName}] return: {ret.FullName} -> inner: {inner.FullName}");
+                DumpProps(inner.FullName);
+            }
+        }
+
+        private static void DumpProps(string fullName)
+        {
+            Console.WriteLine($"\n===== {fullName} (props) =====");
+            var t = ResolveType(fullName);
+            if (t == null) { Console.WriteLine("  (not found)"); return; }
+            foreach (var p in t.GetProperties().OrderBy(p => p.Name))
+                Console.WriteLine($"  {p.PropertyType.Name}  {p.Name}");
+        }
+
+        private static void DumpType(string fullName, string grep = null)
+        {
+            Console.WriteLine($"\n===== {fullName} =====");
+            Type t = null;
+            foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try { t = a.GetType(fullName, false); if (t != null) break; } catch { }
+            }
+            if (t == null)
+            {
+                // Force-load Portal assemblies if not yet referenced
+                try { System.Reflection.Assembly.Load("Intalio.Case.Portal.Core"); } catch { }
+                foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try { t = a.GetType(fullName, false); if (t != null) break; } catch { }
+                }
+            }
+            if (t == null) { Console.WriteLine("  (type not found)"); return; }
+
+            var re = grep == null ? null : new System.Text.RegularExpressions.Regex(grep);
+            var flags = System.Reflection.BindingFlags.Public
+                      | System.Reflection.BindingFlags.Instance
+                      | System.Reflection.BindingFlags.Static
+                      | System.Reflection.BindingFlags.DeclaredOnly;
+            foreach (var m in t.GetMethods(flags).OrderBy(m => m.Name))
+            {
+                if (re != null && !re.IsMatch(m.Name)) continue;
+                var ps = string.Join(", ", m.GetParameters()
+                          .Select(p => p.ParameterType.Name + " " + p.Name));
+                Console.WriteLine($"  {(m.IsStatic ? "static " : "")}{m.ReturnType.Name}  {m.Name}({ps})");
+            }
+        }
+
+        private static void DumpException(Exception ex)
+        {
+            int depth = 0;
+            for (var e = ex; e != null; e = e.InnerException, depth++)
+            {
+                Console.Error.WriteLine(new string('-', 60));
+                Console.Error.WriteLine($"[{depth}] {e.GetType().FullName}: {e.Message}");
+                Console.Error.WriteLine(e.StackTrace);
+                if (e is AggregateException agg)
+                {
+                    foreach (var inner in agg.InnerExceptions) DumpException(inner);
+                    break;
+                }
+            }
+        }
+    }
+}

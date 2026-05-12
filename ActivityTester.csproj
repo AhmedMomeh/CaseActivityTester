@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>ActivityTester</RootNamespace>
+    <AssemblyName>ActivityTester</AssemblyName>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <PortalDir>C:\Program Files\Intalio\UC_CasePortal</PortalDir>
+  </PropertyGroup>
+
+  <!-- Portal is an ASP.NET app; pulling in its shared framework gives us EF Core's
+       transitive Microsoft.Extensions.* (Caching, DependencyInjection, etc.) without
+       having to copy them or probe for them. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!-- Intalio assemblies — referenced for compile only; resolved at runtime from PortalDir. -->
+  <ItemGroup>
+    <Reference Include="Intalio.Case.Core">
+      <HintPath>$(PortalDir)\Intalio.Case.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Intalio.Case.Portal.Core">
+      <HintPath>$(PortalDir)\Intalio.Case.Portal.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(PortalDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Reference the RID-specific (real) SqlClient for compile; runtime resolver loads
+         the same file. The flat-folder SqlClient is the PlatformNotSupported stub. -->
+    <Reference Include="Microsoft.Data.SqlClient">
+      <HintPath>$(PortalDir)\runtimes\win\lib\net6.0\Microsoft.Data.SqlClient.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Aspose libs are loaded by the Portal at runtime; reference them for compile. -->
+    <Reference Include="Aspose.PDF">
+      <HintPath>$(PortalDir)\Aspose.PDF.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Aspose.Words">
+      <HintPath>$(PortalDir)\Aspose.Words.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Aspose.Words exposes a SetImage(SKBitmap) overload, so the compiler needs
+         SkiaSharp referenced for overload resolution even when we only call the
+         stream-based overload. -->
+    <Reference Include="SkiaSharp">
+      <HintPath>$(PortalDir)\SkiaSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Compile every custom activity from the sibling folder (recursively) into this test host. -->
+  <ItemGroup>
+    <Compile Include="..\Case Code Activity Classes\**\*.cs" />
+  </ItemGroup>
+
+  <!-- Copy the Portal appsettings.json next to the test exe so the Intalio data layer
+       finds its connection string and settings the same way the Portal does. -->
+  <ItemGroup>
+    <None Include="$(PortalDir)\appsettings.json" Link="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
