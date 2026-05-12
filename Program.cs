@@ -149,6 +149,15 @@ namespace ActivityTester
                 return 0;
             }
 
+            const bool dumpAttachmentModel = false;
+            if (dumpAttachmentModel)
+            {
+                try { System.Reflection.Assembly.LoadFile(@"C:\Program Files\Intalio\UC_StorageFileSystem\Intalio.Storage.FileSystem.Core.dll"); } catch (Exception e) { Console.WriteLine("load AttachmentModel asm: " + e.Message); }
+                try { System.Reflection.Assembly.LoadFile(@"C:\Program Files\Intalio\UC_StorageFileSystem\Intalio.Storage.Interface.dll"); } catch (Exception e) { Console.WriteLine("load Interface asm: " + e.Message); }
+                FindType("AttachmentModel");
+                return 0;
+            }
+
             const bool dumpStructureGroup = false;
             if (dumpStructureGroup)
             {
