@@ -151,6 +151,14 @@ namespace ActivityTester
 
             const bool dumpAttachmentModel = false;
             const bool dumpAsposeLicense = false;
+            const bool dumpWorkflowItem = false;
+            const bool dumpTaskAndUser = false;
+            const bool dumpUsersFull = false;
+            if (dumpUsersFull)
+            {
+                DumpType("Intalio.Case.Portal.Core.DAL.Users");
+                return 0;
+            }
             if (dumpAsposeLicense)
             {
                 DumpType("Intalio.Core.Utility.AsposeLicense");
@@ -322,6 +330,34 @@ namespace ActivityTester
             catch (Exception ex)
             {
                 Console.Error.WriteLine("  query error: " + ex.Message);
+            }
+        }
+
+        private static void FindStringConstants(string substring)
+        {
+            Console.WriteLine($"\n===== Const strings containing: {substring} =====");
+            try { System.Reflection.Assembly.Load("Intalio.Case.Portal.Core"); } catch { }
+            try { System.Reflection.Assembly.Load("Intalio.Case.Core"); } catch { }
+            foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try { types = a.GetTypes(); } catch { continue; }
+                foreach (var t in types)
+                {
+                    if (t.FullName == null) continue;
+                    if (!t.FullName.StartsWith("Intalio.")) continue;
+                    foreach (var f in t.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic))
+                    {
+                        if (!f.IsLiteral || f.IsInitOnly) continue;
+                        if (f.FieldType != typeof(string)) continue;
+                        try
+                        {
+                            string v = (string)f.GetRawConstantValue();
+                            if (v != null && v.IndexOf(substring, StringComparison.OrdinalIgnoreCase) >= 0)
+                                Console.WriteLine($"  {t.FullName}.{f.Name} = \"{v}\"");
+                        } catch { }
+                    }
+                }
             }
         }
 
