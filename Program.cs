@@ -191,6 +191,41 @@ namespace ActivityTester
             const bool dumpClientCredentials = false;
             const bool dumpIdentityHelperFields = false;
             const bool dumpDocumentFull = false;
+            const bool dumpSmtp = false;
+            const bool dumpEmailApi = false;
+            const bool dumpNotifApi = false;
+            const bool dumpEmailType = false;
+            if (dumpEmailType)
+            {
+                DumpType("Intalio.Core.Email");
+                try
+                {
+                    Console.WriteLine("\n--- Live SmtpSettings ---");
+                    var s = Intalio.Core.Configuration.SmtpSettings;
+                    Console.WriteLine(s == null ? "(null - not loaded)" : "loaded");
+                    if (s != null) foreach (var p in s.GetType().GetProperties())
+                        Console.WriteLine($"  {p.Name} = {p.GetValue(s)}");
+                } catch (Exception e) { Console.WriteLine("Read failed: " + e.Message); }
+                return 0;
+            }
+            if (dumpNotifApi)
+            {
+                DumpType("Intalio.Core.API.ManageNotificationTemplate");
+                DumpType("Intalio.Core.DAL.NotificationTemplate", grep: "Find|List|Get");
+                FindType("SmtpHelper");
+                FindType("EmailService");
+                FindType("Email");
+                return 0;
+            }
+            if (dumpEmailApi)
+            {
+                FindType("NotificationTemplate");
+                FindType("ManageNotificationTemplate");
+                FindType("EmailNotification");
+                FindType("EmailHelper");
+                FindType("SendEmailActivity");
+                return 0;
+            }
             if (dumpDocumentFull)
             {
                 DumpType("Intalio.Case.Portal.Core.DAL.Document");

@@ -1,55 +1,60 @@
 using Intalio.Case.Core.Objects;
 using Intalio.Case.Core.Templates;
 using Intalio.Case.Portal.Core.DAL;
+using Intalio.Core;                 // SmtpSettings
+using Intalio.Core.API;             // ManageNotificationTemplate
 using Microsoft.Data.SqlClient;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Mail;
 using System.Net.Mime;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace Shared.Activities
 {
     /// <summary>
-    /// Sends an HTML email — to a hardcoded recipient list — with every attachment
-    /// of the current case attached. Reads case context (reference number + workflow
-    /// name) from the WorkflowItem and renders them into a clean HTML body.
+    /// Sends an HTML email to a hardcoded recipient list, attaching every document
+    /// of the current case.
     ///
-    /// Usage as a Code Activity Template: drop this class into the Designer and
-    /// place it after the final approval step (or wherever distribution should
-    /// happen) in the workflow.
+    /// Subject + body come from a NotificationTemplate row (the same templates Case
+    /// Designer exposes under "Email Templates"), looked up by name.  Bookmarks
+    /// inside the template ([ReferenceNumber], [WorkflowName], ...) are substituted
+    /// from the case context before sending.
+    ///
+    /// SMTP settings come from the Portal's configured Intalio.Core.Configuration.SmtpSettings
+    /// (the same connection the Portal itself uses for notifications) — no SMTP
+    /// credentials live in this file.
+    ///
+    /// To use a different template, either:
+    ///   - change the DefaultTemplateName constant below, OR
+    ///   - set a workflow property named "emailTemplateName" on the case to override
+    ///     it without touching this code.
     /// </summary>
     internal class SendCaseDocumentsEmailActivity : ActivityTemplate
     {
         // ============================================================
-        //                 CONFIGURATION — EDIT HERE
+        //                 CONFIGURATION
         // ============================================================
 
-        // SMTP
-        private const string SmtpHost      = "smtp.intalio.com";  // <-- replace with your SMTP host
-        private const int    SmtpPort      = 587;                 // 587 = STARTTLS, 25 = plain, 465 = implicit TLS
-        private const bool   SmtpUseSsl    = true;
-        private const string SmtpUserName  = "no-reply@intalio.com";
-        private const string SmtpPassword  = "CHANGE_ME";
+        /// <summary>Name of the NotificationTemplate row in Case Designer → Email Templates.</summary>
+        private const string DefaultTemplateName = "OnSendTask";
 
-        // Email envelope
-        private const string FromAddress   = "no-reply@intalio.com";
-        private const string FromName      = "Case Notifications";
+        /// <summary>Hardcoded recipient list. Separate addresses with ';' or ','.</summary>
+        private const string ToRecipients  = "hr@intalio.com; archive@intalio.com; ahmed.abdelghany@intalio.com";
+        private const string CcRecipients  = "";
+        private const string BccRecipients = "";
 
-        // Recipients — separate multiple addresses with ";"
-        private const string ToRecipients  = "hr@intalio.com; archive@intalio.com";
-        private const string CcRecipients  = "";    // optional, "" to omit
-        private const string BccRecipients = "";    // optional, "" to omit
+        /// <summary>"From" display name (the address itself comes from SmtpSettings.SystemEmail).</summary>
+        private const string FromDisplayName = "Case Notifications";
 
-        // IAM + Storage (for downloading attachment bytes)
+        // IAM + Storage (for downloading attachment bytes only — no SMTP credentials here).
         private const string IamBaseUrl       = "http://localhost:11111";
         private const string StorageBaseUrl   = "http://localhost:44444/";
         private const string AuthClientId     = "398ff3ac-49b6-44fd-a70b-3cd69874c118";
@@ -57,8 +62,7 @@ namespace Shared.Activities
         private const string AuthUserName     = "admin";
         private const string AuthUserPassword = "1";
 
-        // Daily-rotated log: C:\IntalioLogs\SendCaseDocumentsEmailActivity-YYYY-MM-DD.log
-        private const string LogDirectory     = @"C:\IntalioLogs";
+        private const string LogDirectory = @"C:\IntalioLogs";
         private static readonly object LogLock = new object();
 
         private sealed class TokenResponse { public string access_token { get; set; } }
@@ -78,22 +82,47 @@ namespace Shared.Activities
 
             try
             {
+                // 1) Case context.
                 Document document = new Document().Find(documentId);
                 if (document == null) { LogError($"Document.Find({documentId}) returned null."); return; }
 
                 string referenceNumber = document.ReferenceNumber ?? "";
                 string workflowName    = ResolveWorkflowName(documentId) ?? "Case";
-                LogInfo($"Case context: workflow='{workflowName}' refNumber='{referenceNumber}'");
+                LogInfo($"Case: workflow='{workflowName}' ref='{referenceNumber}'");
 
-                // Pull all attachments + their bytes
+                // 2) Email template (optionally overridden per case via workflow property).
+                string templateName = GetProp(workflowItem, "emailTemplateName");
+                if (string.IsNullOrWhiteSpace(templateName)) templateName = DefaultTemplateName;
+
+                var template = new Intalio.Core.DAL.NotificationTemplate().FindByName(templateName);
+                if (template == null)
+                {
+                    LogError($"NotificationTemplate '{templateName}' not found. Aborting.");
+                    return;
+                }
+                LogInfo($"Template: '{template.Name}' (id={template.Id})");
+
+                // 3) Bookmark substitutions.
+                var bookmarks = BuildBookmarks(workflowItem, document, workflowName, referenceNumber);
+                string subject = ApplyBookmarks(template.Subject ?? "", bookmarks);
+                string body    = ApplyBookmarks(template.Body    ?? "", bookmarks);
+
+                // 4) Pull attachments.
                 var attachments = LoadAttachments(documentId);
-                LogInfo($"Loaded {attachments.Count} attachment(s).");
+                LogInfo($"Attachments: {attachments.Count}");
 
-                // Compose + send
-                System.Threading.Tasks.Task
-                    .Run(() => SendEmailAsync(workflowName, referenceNumber, attachments))
-                    .GetAwaiter().GetResult();
+                // 5) SMTP settings — pulled from the Portal-managed Intalio.Core.Configuration.
+                var smtp = Intalio.Core.Configuration.SmtpSettings;
+                if (smtp == null)
+                {
+                    LogError("Intalio.Core.Configuration.SmtpSettings is null — the Portal hasn't loaded SMTP configuration. Aborting.");
+                    return;
+                }
+                LogInfo($"SMTP: {smtp.SmtpServer}:{smtp.Port} ssl={smtp.EnableSSL} from={smtp.SystemEmail}");
 
+                // 6) Compose + send.
+                SendMail(smtp, subject, body, attachments);
+                LogInfo("Email sent.");
                 LogInfo($"---- END    DocumentId={documentId}  result=success ----");
             }
             catch (Exception ex)
@@ -105,33 +134,127 @@ namespace Shared.Activities
         }
 
         // ---------------------------------------------------------------------
-        // Attachment loading (Storage HTTP)
+        // Bookmarks
+        // ---------------------------------------------------------------------
+        /// <summary>
+        /// Builds the bookmark dictionary for template substitution.
+        ///
+        /// Always-provided keys (case-insensitive):
+        ///   ReferenceNumber, WorkflowName, DocumentId, Date, Time, FromName
+        ///
+        /// Plus every value in workflowItem.Properties (so any form field is also
+        /// available as a bookmark by its key, e.g. [candidateName], [jobTitle]).
+        /// </summary>
+        private static Dictionary<string, string> BuildBookmarks(
+            WorkflowItem item, Document document, string workflowName, string referenceNumber)
+        {
+            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "ReferenceNumber", referenceNumber },
+                { "WorkflowName",    workflowName },
+                { "DocumentId",      document.Id.ToString() },
+                { "Date",            DateTime.Now.ToString("yyyy-MM-dd") },
+                { "Time",            DateTime.Now.ToString("HH:mm") },
+                { "FromName",        FromDisplayName },
+                { "URL",             "" }
+            };
+            if (item?.Properties != null)
+            {
+                foreach (var p in item.Properties)
+                {
+                    if (p == null || string.IsNullOrEmpty(p.Name)) continue;
+                    string v = p.Value == null ? "" : Convert.ToString(p.Value);
+                    dict[p.Name] = v;
+                }
+            }
+            return dict;
+        }
+
+        /// <summary>Replaces [BookmarkName] tokens in template text with values from the dictionary.</summary>
+        private static string ApplyBookmarks(string template, Dictionary<string, string> bookmarks)
+        {
+            if (string.IsNullOrEmpty(template) || bookmarks == null || bookmarks.Count == 0) return template ?? "";
+            return Regex.Replace(template, @"\[([A-Za-z0-9_\.]+)\]", m =>
+            {
+                string key = m.Groups[1].Value;
+                return bookmarks.TryGetValue(key, out var v) ? (v ?? "") : m.Value;
+            });
+        }
+
+        // ---------------------------------------------------------------------
+        // Mail send
         // ---------------------------------------------------------------------
         private sealed class AttachmentBytes { public string Name; public byte[] Bytes; public string ContentType; }
 
+        private static void SendMail(SmtpSettings settings, string subject, string body, List<AttachmentBytes> attachments)
+        {
+            using (var msg = new MailMessage())
+            {
+                string fromAddress = string.IsNullOrWhiteSpace(settings.SystemEmail) ? settings.UserName : settings.SystemEmail;
+                msg.From = new MailAddress(fromAddress, FromDisplayName);
+                AddAddresses(msg.To,  ToRecipients);
+                AddAddresses(msg.CC,  CcRecipients);
+                AddAddresses(msg.Bcc, BccRecipients);
+                msg.Subject = subject;
+                msg.SubjectEncoding = Encoding.UTF8;
+                msg.BodyEncoding    = Encoding.UTF8;
+                msg.IsBodyHtml      = LooksLikeHtml(body);
+                msg.Body            = body;
+
+                foreach (var a in attachments)
+                {
+                    var att = new System.Net.Mail.Attachment(new MemoryStream(a.Bytes), a.Name, a.ContentType);
+                    msg.Attachments.Add(att);
+                }
+
+                using (var smtp = new SmtpClient(settings.SmtpServer, settings.Port))
+                {
+                    smtp.EnableSsl = settings.EnableSSL;
+                    if (!string.IsNullOrEmpty(settings.UserName))
+                        smtp.Credentials = new NetworkCredential(settings.UserName, settings.Password ?? "");
+                    smtp.DeliveryMethod = SmtpDeliveryMethod.Network;
+                    smtp.Send(msg);
+                }
+            }
+        }
+
+        private static bool LooksLikeHtml(string body)
+        {
+            if (string.IsNullOrEmpty(body)) return false;
+            // Cheap check — every NotificationTemplate body the Portal ships starts with <meta> or <html>.
+            int i = 0;
+            while (i < body.Length && char.IsWhiteSpace(body[i])) i++;
+            return i < body.Length && body[i] == '<';
+        }
+
+        private static void AddAddresses(MailAddressCollection coll, string csv)
+        {
+            if (string.IsNullOrWhiteSpace(csv)) return;
+            foreach (var raw in csv.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var addr = raw.Trim();
+                if (addr.Length > 0) coll.Add(new MailAddress(addr));
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Attachment loading (Storage)
+        // ---------------------------------------------------------------------
         private static List<AttachmentBytes> LoadAttachments(long documentId)
         {
             var result = new List<AttachmentBytes>();
-            var atts = new Attachment().ListOriginalDocumentByDocumentId(documentId);
+            var atts = new Intalio.Case.Portal.Core.DAL.Attachment().ListOriginalDocumentByDocumentId(documentId);
             if (atts == null || atts.Count == 0) return result;
 
             string token = GetAccessTokenAsync().GetAwaiter().GetResult();
 
             foreach (var a in atts)
             {
-                if (a == null || string.IsNullOrEmpty(a.StorageAttachmentId) || string.IsNullOrEmpty(a.Name))
-                {
-                    LogWarn("Skipping attachment with null/empty name or storage id.");
-                    continue;
-                }
+                if (a == null || string.IsNullOrEmpty(a.StorageAttachmentId) || string.IsNullOrEmpty(a.Name)) continue;
                 try
                 {
                     byte[] bytes = DownloadFromStorageAsync(a.StorageAttachmentId, token).GetAwaiter().GetResult();
-                    if (bytes == null || bytes.Length == 0)
-                    {
-                        LogWarn($"Skipping '{a.Name}': empty bytes from storage.");
-                        continue;
-                    }
+                    if (bytes == null || bytes.Length == 0) continue;
                     result.Add(new AttachmentBytes
                     {
                         Name        = a.Name,
@@ -164,158 +287,7 @@ namespace Shared.Activities
         }
 
         // ---------------------------------------------------------------------
-        // Email composition + send
-        // ---------------------------------------------------------------------
-        private static async System.Threading.Tasks.Task SendEmailAsync(
-            string workflowName, string referenceNumber, List<AttachmentBytes> attachments)
-        {
-            string subject = $"[{referenceNumber}] {workflowName} — Case Documents";
-            string htmlBody = BuildHtmlBody(workflowName, referenceNumber, attachments);
-            string plainBody = BuildPlainBody(workflowName, referenceNumber, attachments);
-
-            using (var msg = new MailMessage())
-            {
-                msg.From = new MailAddress(FromAddress, FromName);
-                AddAddresses(msg.To,  ToRecipients);
-                AddAddresses(msg.CC,  CcRecipients);
-                AddAddresses(msg.Bcc, BccRecipients);
-                msg.Subject = subject;
-
-                var plain = AlternateView.CreateAlternateViewFromString(plainBody, new ContentType("text/plain; charset=utf-8"));
-                var html  = AlternateView.CreateAlternateViewFromString(htmlBody,  new ContentType("text/html;  charset=utf-8"));
-                msg.AlternateViews.Add(plain);
-                msg.AlternateViews.Add(html);
-
-                foreach (var a in attachments)
-                {
-                    var stream = new MemoryStream(a.Bytes);
-                    var att    = new System.Net.Mail.Attachment(stream, a.Name, a.ContentType);
-                    msg.Attachments.Add(att);
-                }
-
-                using (var smtp = new SmtpClient(SmtpHost, SmtpPort))
-                {
-                    smtp.EnableSsl   = SmtpUseSsl;
-                    smtp.Credentials = new NetworkCredential(SmtpUserName, SmtpPassword);
-                    smtp.DeliveryMethod = SmtpDeliveryMethod.Network;
-                    LogInfo($"Sending: subject='{subject}'  to={ToRecipients}  cc={CcRecipients}  bcc={BccRecipients}  attachments={attachments.Count}");
-                    await smtp.SendMailAsync(msg);
-                    LogInfo("Email sent successfully.");
-                }
-            }
-        }
-
-        private static void AddAddresses(MailAddressCollection coll, string csv)
-        {
-            if (string.IsNullOrWhiteSpace(csv)) return;
-            foreach (var raw in csv.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries))
-            {
-                var addr = raw.Trim();
-                if (addr.Length > 0) coll.Add(new MailAddress(addr));
-            }
-        }
-
-        /// <summary>HTML body with inline styles for email-client compatibility.</summary>
-        private static string BuildHtmlBody(string workflowName, string referenceNumber, List<AttachmentBytes> attachments)
-        {
-            string today = DateTime.Now.ToString("dd MMM yyyy");
-            string attRows = "";
-            if (attachments.Count == 0)
-            {
-                attRows = "<tr><td style='padding:8px;color:#888;border-top:1px solid #eee'>(no attachments)</td><td style='padding:8px;color:#888;border-top:1px solid #eee;text-align:right'></td></tr>";
-            }
-            else
-            {
-                int i = 1;
-                foreach (var a in attachments)
-                {
-                    string kb = (a.Bytes.Length / 1024.0).ToString("N0") + " KB";
-                    attRows += "<tr>"
-                            +  "<td style='padding:8px;border-top:1px solid #eee;font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#333'>"
-                            +     i + ". " + WebEncode(a.Name)
-                            +  "</td>"
-                            +  "<td style='padding:8px;border-top:1px solid #eee;font-family:Segoe UI,Arial,sans-serif;font-size:12px;color:#888;text-align:right'>"
-                            +     kb
-                            +  "</td>"
-                            +  "</tr>";
-                    i++;
-                }
-            }
-
-            return
-"<!doctype html><html><body style='margin:0;padding:0;background:#f4f6f8;font-family:Segoe UI,Arial,sans-serif;color:#333'>" +
-"<table role='presentation' cellpadding='0' cellspacing='0' border='0' width='100%' style='background:#f4f6f8;padding:24px 0'>" +
-  "<tr><td align='center'>" +
-    "<table role='presentation' cellpadding='0' cellspacing='0' border='0' width='600' style='background:#ffffff;border:1px solid #e1e5ea;border-radius:6px;overflow:hidden'>" +
-
-      "<tr><td style='background:#1f3a5f;padding:18px 24px;color:#ffffff'>" +
-        "<div style='font-size:18px;font-weight:600'>" + WebEncode(workflowName) + "</div>" +
-        "<div style='font-size:13px;opacity:0.85;margin-top:2px'>Reference: <strong>" + WebEncode(referenceNumber) + "</strong></div>" +
-      "</td></tr>" +
-
-      "<tr><td style='padding:20px 24px;font-size:14px;line-height:1.5;color:#333'>" +
-        "<p style='margin:0 0 12px'>Dear team,</p>" +
-        "<p style='margin:0 0 12px'>Please find attached the documents for case <strong>" + WebEncode(referenceNumber) + "</strong> (" + WebEncode(workflowName) + ").</p>" +
-        "<p style='margin:0'>Kind regards,<br><span style='color:#777'>" + WebEncode(FromName) + "</span></p>" +
-      "</td></tr>" +
-
-      "<tr><td style='padding:0 24px 8px;font-size:13px;color:#555;font-weight:600'>Attached documents</td></tr>" +
-      "<tr><td style='padding:0 24px 18px'>" +
-        "<table role='presentation' cellpadding='0' cellspacing='0' border='0' width='100%' style='border-collapse:collapse;border:1px solid #e1e5ea'>" +
-          "<tr style='background:#f7f9fc'>" +
-            "<th align='left'  style='padding:8px;font-size:12px;color:#666;font-weight:600;border-bottom:1px solid #e1e5ea'>Filename</th>" +
-            "<th align='right' style='padding:8px;font-size:12px;color:#666;font-weight:600;border-bottom:1px solid #e1e5ea'>Size</th>" +
-          "</tr>" +
-          attRows +
-        "</table>" +
-      "</td></tr>" +
-
-      "<tr><td style='background:#fafbfc;padding:12px 24px;font-size:11px;color:#999;border-top:1px solid #e1e5ea'>" +
-        "Generated on " + WebEncode(today) + " — this is an automated message from the Case Portal." +
-      "</td></tr>" +
-
-    "</table>" +
-  "</td></tr>" +
-"</table>" +
-"</body></html>";
-        }
-
-        private static string BuildPlainBody(string workflowName, string referenceNumber, List<AttachmentBytes> attachments)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine(workflowName + " — " + referenceNumber);
-            sb.AppendLine(new string('-', 60));
-            sb.AppendLine();
-            sb.AppendLine("Dear team,");
-            sb.AppendLine();
-            sb.AppendLine("Please find attached the documents for case " + referenceNumber + " (" + workflowName + ").");
-            sb.AppendLine();
-            sb.AppendLine("Attached documents:");
-            if (attachments.Count == 0) sb.AppendLine("  (no attachments)");
-            else
-            {
-                int i = 1;
-                foreach (var a in attachments)
-                {
-                    sb.AppendLine("  " + i + ". " + a.Name + "  (" + (a.Bytes.Length / 1024.0).ToString("N0") + " KB)");
-                    i++;
-                }
-            }
-            sb.AppendLine();
-            sb.AppendLine("Kind regards,");
-            sb.AppendLine(FromName);
-            return sb.ToString();
-        }
-
-        private static string WebEncode(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
-                    .Replace("\"", "&quot;").Replace("'", "&#39;");
-        }
-
-        // ---------------------------------------------------------------------
-        // Workflow-name SQL lookup (same pattern as ArchiveHRDocumentsToDMSActivity)
+        // Workflow-name SQL lookup
         // ---------------------------------------------------------------------
         private static string ResolveWorkflowName(long documentId)
         {
