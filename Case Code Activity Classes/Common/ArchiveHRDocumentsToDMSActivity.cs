@@ -1,7 +1,7 @@
 using Intalio.Case.Core.Objects;
 using Intalio.Case.Core.Templates;
-using Intalio.Case.Portal.Core.API;
 using Intalio.Case.Portal.Core.DAL;
+using Microsoft.Data.SqlClient;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
@@ -14,21 +14,36 @@ using System.Threading.Tasks;
 
 namespace Shared.Activities
 {
+    /// <summary>
+    /// Archives every attachment of a case to the DMS under
+    ///
+    ///     HRE / {workflowName} / {referenceNumber}
+    ///
+    /// where the workflow name and reference number are derived from the case
+    /// itself (Document.ReferenceNumber + the WorkflowDefinition the case is
+    /// running through). Example resulting path:
+    ///
+    ///     HRE / WorkforceRequisition_HiringRequest / WFR-2026-000012
+    ///
+    /// Folders are created on the fly if they don't already exist, so the same
+    /// activity works for the first case in a new workflow as well as for
+    /// subsequent cases that land in the same parent folder.
+    /// </summary>
     internal class ArchiveHRDocumentsToDMSActivity : ActivityTemplate
     {
-        // -------- STATIC CONFIG (replace placeholders with real values) --------
-        private const string IamBaseUrl     = "http://localhost:11111";
-        private const string DmsBaseUrl     = "http://localhost:8080/DMS/";
-        private const string StorageBaseUrl = "http://localhost:44444/";
-        private const string DmsClientId     = "398ff3ac-49b6-44fd-a70b-3cd69874c118";
-        private const string DmsClientSecret = "ac63daac-edd5-496a-834f-e14a0e76c5c0";
-        private const string DmsUserName     = "admin";
-        private const string DmsUserPassword = "1";
-        private const string DmsUserId       = "1"; // numeric DMS user id — required header for IntegrationService/UploadPage
-        private const string HrCabinetName   = "HRE";
+        // -------- STATIC CONFIG --------
+        private const string IamBaseUrl       = "http://localhost:11111";
+        private const string DmsBaseUrl       = "http://localhost:8080/DMS/";
+        private const string StorageBaseUrl   = "http://localhost:44444/";
+        private const string DmsClientId      = "398ff3ac-49b6-44fd-a70b-3cd69874c118";
+        private const string DmsClientSecret  = "ac63daac-edd5-496a-834f-e14a0e76c5c0";
+        private const string DmsUserName      = "admin";
+        private const string DmsUserPassword  = "1";
+        private const string DmsUserId        = "1"; // numeric DMS user id — required header for IntegrationService/UploadPage
+        private const string HrCabinetName    = "HRE";
 
-        // Daily-rotated log file: C:\IntalioLogs\ArchiveEmployeeDocumentActivity-YYYY-MM-DD.log
-        private const string LogDirectory    = @"C:\IntalioLogs";
+        // Daily-rotated log: C:\IntalioLogs\ArchiveHRDocumentsToDMSActivity-YYYY-MM-DD.log
+        private const string LogDirectory     = @"C:\IntalioLogs";
         private static readonly object LogLock = new object();
 
         private sealed class TokenResponse { public string access_token { get; set; } }
@@ -44,38 +59,54 @@ namespace Shared.Activities
 
         public override void Execute(WorkflowItem workflowItem)
         {
-            string documentId = GetProp(workflowItem, "DocumentId");
-            string employeeId = GetProp(workflowItem, "employeeId");
-            string category = "Case Files"; //GetProp(workflowItem, "DocumentCategory");
-
-            LogInfo($"---- BEGIN Archive Case DocumentId={documentId}  EmployeeId={employeeId}  Category={category} ----");
+            string documentIdStr = GetProp(workflowItem, "DocumentId");
+            LogInfo($"---- BEGIN  DocumentId={documentIdStr} ----");
+            if (!long.TryParse(documentIdStr, out long documentId) || documentId <= 0)
+            {
+                LogError($"Invalid DocumentId: '{documentIdStr}'");
+                return;
+            }
 
             try
             {
-                Document document = new Document().Find(Convert.ToInt64(documentId));
-                if (document == null)
+                Document document = new Document().Find(documentId);
+                if (document == null) { LogError($"Document.Find({documentId}) returned null."); return; }
+
+                string referenceNumber = document.ReferenceNumber;
+                if (string.IsNullOrWhiteSpace(referenceNumber))
                 {
-                    LogError($"Document.Find({documentId}) returned null. Aborting.");
+                    LogError($"Document {documentId} has no ReferenceNumber — aborting.");
                     return;
                 }
-                LogInfo($"Document loaded: Id={document.Id}  Status={document.StatusId}  CreatedByUserId={document.CreatedByUserId}");
 
-                System.Threading.Tasks.Task.Run(() => ArchiveToDmsAsync(document, employeeId, category)).GetAwaiter().GetResult();
+                string workflowName = ResolveWorkflowName(documentId);
+                if (string.IsNullOrWhiteSpace(workflowName))
+                {
+                    LogError($"Could not resolve workflow name for document {documentId} — aborting.");
+                    return;
+                }
 
-                document.StatusId = 14; // Approved
-                document.Update();
-                LogInfo($"Document StatusId updated to 14 (Approved). Persisted via document.Update().");
+                string workflowFolder = SanitizeFolderName(workflowName);
+                LogInfo($"Target DMS path: {HrCabinetName}/{workflowFolder}/{referenceNumber}");
+
+                System.Threading.Tasks.Task
+                    .Run(() => ArchiveToDmsAsync(document, workflowFolder, referenceNumber))
+                    .GetAwaiter().GetResult();
+
                 LogInfo($"---- END    DocumentId={documentId}  result=success ----");
             }
             catch (Exception ex)
             {
                 LogException("Execute() failed", ex);
-                LogInfo($"---- END    DocumentId={documentId}  result=FAILED ----");
+                LogInfo($"---- END    DocumentId={documentIdStr}  result=FAILED ----");
                 throw;
             }
         }
 
-        private async System.Threading.Tasks.Task ArchiveToDmsAsync(Document document, string employeeId, string category)
+        // ---------------------------------------------------------------------
+        // DMS archive flow
+        // ---------------------------------------------------------------------
+        private async System.Threading.Tasks.Task ArchiveToDmsAsync(Document document, string workflowFolder, string referenceNumber)
         {
             var attachments = new Attachment().FindByDocumentId(document.Id);
             int total = attachments?.Count ?? 0;
@@ -90,15 +121,21 @@ namespace Shared.Activities
                 http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
                 http.DefaultRequestHeaders.Add("userId", DmsUserId);
 
+                // 1) HRE cabinet
                 long hreCabinetId = await ResolveCabinetIdAsync(http, HrCabinetName);
                 LogInfo($"HRE cabinet resolved: id={hreCabinetId}");
 
-                long employeeFolderId = await FindOrCreateFolderAsync(http, hreCabinetId, HrCabinetName + "/", employeeId);
-                LogInfo($"Employee folder resolved: name={employeeId} id={employeeFolderId} parent=HRE/");
+                // 2) Workflow-named folder under HRE
+                long workflowFolderId = await FindOrCreateFolderAsync(
+                    http, hreCabinetId, HrCabinetName + "/", workflowFolder);
+                LogInfo($"Workflow folder: name='{workflowFolder}' id={workflowFolderId} parent={HrCabinetName}/");
 
-                long categoryFolderId = await FindOrCreateFolderAsync(http, employeeFolderId, HrCabinetName + "/" + employeeId + "/", category);
-                LogInfo($"Category folder resolved: name={category} id={categoryFolderId} parent=HRE/{employeeId}/");
+                // 3) Reference-number folder under the workflow folder
+                long refFolderId = await FindOrCreateFolderAsync(
+                    http, workflowFolderId, HrCabinetName + "/" + workflowFolder + "/", referenceNumber);
+                LogInfo($"Reference folder: name='{referenceNumber}' id={refFolderId} parent={HrCabinetName}/{workflowFolder}/");
 
+                // 4) Upload each attachment into the reference-number folder
                 int uploaded = 0, skipped = 0, failed = 0;
                 foreach (var attachment in attachments)
                 {
@@ -110,38 +147,81 @@ namespace Shared.Activities
                     LogInfo($"Attachment {attachment.Id} '{attachment.Name}' storageId={attachment.StorageAttachmentId} sizeDb={attachment.Size}");
 
                     byte[] fileBytes;
-                    try
-                    {
-                        fileBytes = await DownloadFromStorageAsync(attachment.StorageAttachmentId, accessToken);
-                    }
+                    try { fileBytes = await DownloadFromStorageAsync(attachment.StorageAttachmentId, accessToken); }
                     catch (Exception ex)
-                    {
-                        LogException($"Download FAILED for '{attachment.Name}' (storageId={attachment.StorageAttachmentId})", ex);
-                        failed++;
-                        continue;
-                    }
-
+                    { LogException($"Download FAILED for '{attachment.Name}' (storageId={attachment.StorageAttachmentId})", ex); failed++; continue; }
                     if (fileBytes == null || fileBytes.Length == 0)
                     { LogWarn($"Skipping '{attachment.Name}': empty bytes from storage."); skipped++; continue; }
                     LogInfo($"Downloaded '{attachment.Name}' ({fileBytes.Length} bytes).");
 
                     try
                     {
-                        await UploadFileAsync(http, categoryFolderId, attachment.Name, fileBytes);
-                        LogInfo($"Uploaded '{attachment.Name}' to DMS folderId={categoryFolderId}.");
+                        await UploadFileAsync(http, refFolderId, attachment.Name, fileBytes);
+                        LogInfo($"Uploaded '{attachment.Name}' to DMS folderId={refFolderId}.");
                         uploaded++;
                     }
                     catch (Exception ex)
-                    {
-                        LogException($"Upload FAILED for '{attachment.Name}' to folderId={categoryFolderId}", ex);
-                        failed++;
-                    }
+                    { LogException($"Upload FAILED for '{attachment.Name}' to folderId={refFolderId}", ex); failed++; }
                 }
 
                 LogInfo($"Archive summary: total={total}  uploaded={uploaded}  skipped={skipped}  failed={failed}");
             }
         }
 
+        // ---------------------------------------------------------------------
+        // Workflow name lookup — Document → WorkflowInstance → WorkflowDefinition
+        // ---------------------------------------------------------------------
+        private static string ResolveWorkflowName(long documentId)
+        {
+            string conn = Intalio.Case.Core.Configuration.DbConnectionString;
+            if (string.IsNullOrEmpty(conn)) { LogWarn("No DB connection string — cannot resolve workflow name."); return null; }
+
+            const string sql = @"
+SELECT TOP 1 wd.Name
+FROM   Document d
+JOIN   WorkflowInstances    wi ON wi.WorkflowInstanceId  = d.WorkflowInstanceId
+JOIN   WorkflowDefinition   wd ON wd.WorkflowId          = wi.WorkflowDefinitionId
+WHERE  d.Id = @docId;";
+
+            try
+            {
+                using (var c = new SqlConnection(conn))
+                {
+                    c.Open();
+                    using (var cmd = new SqlCommand(sql, c))
+                    {
+                        cmd.Parameters.AddWithValue("@docId", documentId);
+                        var v = cmd.ExecuteScalar();
+                        return v == null || v == DBNull.Value ? null : Convert.ToString(v);
+                    }
+                }
+            }
+            catch (Exception ex) { LogException($"ResolveWorkflowName({documentId}) failed", ex); return null; }
+        }
+
+        /// <summary>
+        /// Strips characters from a workflow name that can't appear in DMS folder
+        /// names (slash, backslash, colon, etc.). Spaces are preserved.
+        /// Example: "WorkforceRequisition/HiringRequest" -> "WorkforceRequisition_HiringRequest"
+        /// </summary>
+        private static string SanitizeFolderName(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return "Workflow";
+            var sb = new System.Text.StringBuilder(raw.Length);
+            foreach (var ch in raw.Trim())
+            {
+                if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?'
+                    || ch == '"' || ch == '<' || ch == '>' || ch == '|')
+                    sb.Append('_');
+                else
+                    sb.Append(ch);
+            }
+            return sb.ToString();
+        }
+
+        // ---------------------------------------------------------------------
+        // Storage IO + IAM
+        // ---------------------------------------------------------------------
         private async Task<byte[]> DownloadFromStorageAsync(string storageAttachmentId, string bearerToken)
         {
             string url = StorageBaseUrl + "Storage/Download?fileId=" + Uri.EscapeDataString(storageAttachmentId);
@@ -171,7 +251,6 @@ namespace Shared.Activities
                     new KeyValuePair<string, string>("password",      DmsUserPassword),
                 };
                 request.Content = new FormUrlEncodedContent(form);
-
                 using (var response = await iamClient.SendAsync(request))
                 {
                     response.EnsureSuccessStatusCode();
@@ -181,6 +260,9 @@ namespace Shared.Activities
             }
         }
 
+        // ---------------------------------------------------------------------
+        // DMS folder helpers
+        // ---------------------------------------------------------------------
         private async Task<long> ResolveCabinetIdAsync(HttpClient http, string cabinetName)
         {
             var hits = await SearchFoldersByNameAsync(http, cabinetName);
@@ -220,8 +302,7 @@ namespace Shared.Activities
                 if (string.IsNullOrWhiteSpace(body)) return new List<FolderHit>();
 
                 // The DMS returns ["Couldn't find the specified folder"] when there is no
-                // match — a JSON array of strings, not of objects. Parse loosely and only
-                // keep object-shaped entries.
+                // match — a JSON array of strings, not of objects. Parse loosely.
                 var token = Newtonsoft.Json.Linq.JToken.Parse(body);
                 if (token.Type != Newtonsoft.Json.Linq.JTokenType.Array) return new List<FolderHit>();
 
@@ -259,7 +340,6 @@ namespace Shared.Activities
                        + "&confidential=false"
                        + "&isSingleUpload=true"
                        + "&comment=";
-
             using (var content = new ByteArrayContent(fileBytes))
             {
                 content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
@@ -267,38 +347,31 @@ namespace Shared.Activities
                 {
                     string body = await response.Content.ReadAsStringAsync();
                     if (!response.IsSuccessStatusCode)
-                    {
                         throw new InvalidOperationException(
                             $"DMS upload returned {(int)response.StatusCode} {response.ReasonPhrase} for '{fileName}'.\n" +
-                            $"URL: {http.BaseAddress}{url}\n" +
-                            $"Body: {body}");
-                    }
+                            $"URL: {http.BaseAddress}{url}\nBody: {body}");
                     if (!body.Contains("#Success#"))
                         throw new InvalidOperationException("DMS upload failed for '" + fileName + "': " + body);
                 }
             }
         }
 
+        // ---------------------------------------------------------------------
+        // Helpers + logging
+        // ---------------------------------------------------------------------
         private static string GetProp(WorkflowItem item, string key)
         {
-            try
-            {
-                var val = item?.Properties?[key]?.Value;
-                return val == null ? string.Empty : Convert.ToString(val);
-            }
+            try { var v = item?.Properties?[key]?.Value; return v == null ? string.Empty : Convert.ToString(v); }
             catch { return string.Empty; }
         }
 
-        // -------- daily-rotated logging --------
-
-        private static void LogInfo(string message)  { Write("INFO ", message); }
-        private static void LogWarn(string message)  { Write("WARN ", message); }
-        private static void LogError(string message) { Write("ERROR", message); }
+        private static void LogInfo (string m) { Write("INFO ", m); }
+        private static void LogWarn (string m) { Write("WARN ", m); }
+        private static void LogError(string m) { Write("ERROR", m); }
 
         private static void LogException(string context, Exception ex)
         {
-            var sb = new System.Text.StringBuilder();
-            sb.Append(context).Append(": ");
+            var sb = new System.Text.StringBuilder().Append(context).Append(": ");
             int depth = 0;
             for (var e = ex; e != null; e = e.InnerException, depth++)
             {
@@ -313,27 +386,17 @@ namespace Shared.Activities
         {
             try
             {
-                string path = Path.Combine(
-                    LogDirectory,
-                    "ArchiveEmployeeDocumentActivity-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
-
-                string line = string.Concat(
-                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                    "  ", level,
-                    "  [tid:", Thread.CurrentThread.ManagedThreadId.ToString(), "]  ",
-                    message,
-                    Environment.NewLine);
-
+                string path = Path.Combine(LogDirectory,
+                    "ArchiveHRDocumentsToDMSActivity-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
+                string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + level
+                            + "  [tid:" + Thread.CurrentThread.ManagedThreadId + "]  " + message + Environment.NewLine;
                 lock (LogLock)
                 {
                     Directory.CreateDirectory(LogDirectory);
                     File.AppendAllText(path, line, System.Text.Encoding.UTF8);
                 }
             }
-            catch
-            {
-                // logging must never throw and break the activity
-            }
+            catch { }
         }
     }
 }
