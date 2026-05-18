@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 
 namespace Shared.Activities
 {
-    internal class ArchiveDocumentsToDMSActivity : ActivityTemplate
+    internal class ArchiveHRDocumentsToDMSActivity : ActivityTemplate
     {
         // -------- STATIC CONFIG (replace placeholders with real values) --------
         private const string IamBaseUrl     = "http://localhost:11111";

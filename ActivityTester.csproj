@@ -60,13 +60,6 @@
     </Reference>
   </ItemGroup>
 
-  <!-- The .NET SDK auto-includes every .cs file under the project folder (including
-       the "Case Code Activity Classes" subtree). We only need an explicit Remove for
-       the one file that exists in two locations under that subtree. -->
-  <ItemGroup>
-    <Compile Remove="Case Code Activity Classes\HR\Short listed Candidate List\ArchiveDocumentsToDMSActivity.cs" />
-  </ItemGroup>
-
   <!-- Copy the Portal appsettings.json next to the test exe so the Intalio data layer
        finds its connection string and settings the same way the Portal does. -->
   <ItemGroup>
