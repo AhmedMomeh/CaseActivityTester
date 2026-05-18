@@ -361,3 +361,11 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# ---- Backups / OneDrive-conflict copies ----
+*.backup-*.docx
+* - Copy.docx
+* - Copy.doc
+* - Copy.pdf
+*~$*.docx
+*~$*.doc

@@ -60,11 +60,11 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Compile every custom activity from the sibling folder (recursively) into this test host. -->
+  <!-- The .NET SDK auto-includes every .cs file under the project folder (including
+       the "Case Code Activity Classes" subtree). We only need an explicit Remove for
+       the one file that exists in two locations under that subtree. -->
   <ItemGroup>
-    <Compile Include="..\Case Code Activity Classes\**\*.cs" />
-    <!-- Temporary dedupe: the same class lives in two folders. Exclude one copy for the harness. -->
-    <Compile Remove="..\Case Code Activity Classes\HR\Short listed Candidate List\ArchiveDocumentsToDMSActivity.cs" />
+    <Compile Remove="Case Code Activity Classes\HR\Short listed Candidate List\ArchiveDocumentsToDMSActivity.cs" />
   </ItemGroup>
 
   <!-- Copy the Portal appsettings.json next to the test exe so the Intalio data layer
