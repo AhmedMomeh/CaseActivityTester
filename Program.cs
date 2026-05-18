@@ -181,6 +181,142 @@ namespace ActivityTester
                 DumpType("Intalio.Case.Portal.Core.DAL.Group",     grep: "ListBy|FindBy|UserId|Ids");
                 return 0;
             }
+
+            // ===== Probe for Structure / User-Structure mapping =====
+            const bool dumpStructureLookup = false;
+            const bool dumpIdentityHelper = false;
+            const bool dumpUserModel = false;
+            const bool dumpCoreConfig = false;
+            const bool dumpIamConfig = false;
+            const bool dumpClientCredentials = false;
+            const bool dumpIdentityHelperFields = false;
+            const bool dumpDocumentFull = false;
+            if (dumpDocumentFull)
+            {
+                DumpType("Intalio.Case.Portal.Core.DAL.Document");
+                return 0;
+            }
+            if (dumpIdentityHelperFields)
+            {
+                var t = Type.GetType("Intalio.Core.API.IdentityHelper, Intalio.Core");
+                if (t != null) {
+                    Console.WriteLine("=== IdentityHelper fields (public + non-public, static + instance) ===");
+                    foreach (var f in t.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance))
+                        Console.WriteLine($"  {(f.IsStatic ? "static " : "")}{f.FieldType.Name} {f.Name} {(f.IsStatic ? " = " + (f.GetValue(null) ?? "null") : "")}");
+                    Console.WriteLine("=== IdentityHelper properties ===");
+                    foreach (var p in t.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance))
+                        Console.WriteLine($"  {p.PropertyType.Name} {p.Name}");
+                }
+                // Also dump Helper class which has HttpGet/HttpPost - may carry the URL
+                var helper = Type.GetType("Intalio.Core.Helper, Intalio.Core");
+                if (helper != null) {
+                    Console.WriteLine("=== Intalio.Core.Helper static fields ===");
+                    foreach (var f in helper.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static))
+                    {
+                        object v = null;
+                        try { v = f.GetValue(null); } catch { }
+                        Console.WriteLine($"  {f.FieldType.Name} {f.Name} = {v ?? "null"}");
+                    }
+                }
+                return 0;
+            }
+            if (dumpClientCredentials)
+            {
+                DumpType("Intalio.Core.ClientCredentialAccessToken");
+                FindType("IdentityModel");
+                FindType("ClientCredentials");
+                FindType("IamSettings");
+                // Probe fields too (not just properties)
+                var t = Type.GetType("Intalio.Core.ClientCredentialAccessToken, Intalio.Core");
+                if (t != null) {
+                    Console.WriteLine("\n=== ClientCredentialAccessToken fields ===");
+                    foreach (var f in t.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance))
+                        Console.WriteLine($"  {(f.IsStatic ? "static " : "")}{f.FieldType.Name} {f.Name}");
+                }
+                return 0;
+            }
+            if (dumpIamConfig)
+            {
+                FindType("IdentityServerSettings");
+                FindType("IdentityServer");
+                FindType("IdentityConfiguration");
+                FindType("ClientCredentialAccessToken");
+                // Look for any Core type with URL fields
+                try { System.Reflection.Assembly.Load("Intalio.Core"); } catch { }
+                Console.WriteLine("\n===== Properties on Intalio.* types containing 'Identity' or 'BaseUrl' =====");
+                foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    Type[] types;
+                    try { types = a.GetTypes(); } catch { continue; }
+                    foreach (var t in types)
+                    {
+                        if (t.FullName == null || !t.FullName.StartsWith("Intalio.")) continue;
+                        foreach (var p in t.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly))
+                        {
+                            if (p.Name.IndexOf("IdentityServer", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                p.Name.IndexOf("IamUrl",         StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                p.Name.IndexOf("BaseUrl",        StringComparison.OrdinalIgnoreCase) >= 0)
+                                Console.WriteLine($"  {t.FullName}.{p.Name} ({p.PropertyType.Name})");
+                        }
+                    }
+                }
+                return 0;
+            }
+            if (dumpCoreConfig)
+            {
+                FindType("Configuration");
+                DumpType("Intalio.Core.Configuration");
+                return 0;
+            }
+            if (dumpUserModel)
+            {
+                DumpProps("Intalio.Core.Model.UserModel");
+                FindType("UserModel");
+                return 0;
+            }
+            if (dumpStructureLookup)
+            {
+                // Force-load the Portal asm so all types are visible.
+                try { System.Reflection.Assembly.Load("Intalio.Case.Portal.Core"); } catch { }
+                try { System.Reflection.Assembly.Load("Intalio.Case.Core"); } catch { }
+
+                Console.WriteLine("\n===== Any DAL type with 'Structure' in its full name =====");
+                foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    System.Type[] types;
+                    try { types = a.GetTypes(); } catch { continue; }
+                    foreach (var t in types)
+                    {
+                        if (t.FullName == null) continue;
+                        if (!t.FullName.StartsWith("Intalio.")) continue;
+                        if (t.FullName.IndexOf("Structure", System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        Console.WriteLine("  " + t.FullName);
+                    }
+                }
+
+                Console.WriteLine("\n===== Methods/props returning a 'Structure'-like type =====");
+                foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    System.Type[] types;
+                    try { types = a.GetTypes(); } catch { continue; }
+                    foreach (var t in types)
+                    {
+                        if (t.FullName == null || !t.FullName.StartsWith("Intalio.")) continue;
+                        try
+                        {
+                            foreach (var m in t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly))
+                            {
+                                var rn = m.ReturnType?.Name ?? "";
+                                if (rn.IndexOf("Structure", System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                                if (m.Name.StartsWith("get_") || m.Name.StartsWith("set_")) continue;
+                                Console.WriteLine($"  {t.FullName}.{m.Name}() -> {rn}");
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                return 0;
+            }
             // =========================================================================
 
             // ===================================================================
@@ -197,13 +333,18 @@ namespace ActivityTester
             //ActivityTemplate activity = new HRRouteContractByGradeActivity();
             //ActivityTemplate activity = new NextApprovalRoleActivity();
             //ActivityTemplate activity = new IPO_IssuanceOfPurchaseOrder_RouteByAmountActivity();
-            ActivityTemplate activity = new StampApprovedDocumentsActivity();
+            //ActivityTemplate activity = new StampApprovedDocumentsActivity();
+            ActivityTemplate activity = new BuildApprovalHistoryActivity();
 
             var props = new PropertyCollection
             {
+                // For BuildApprovalHistoryActivity:
+                new Property { Name = "DocumentId",       Value = "69" },
+                new Property { Name = "approvalHistory",  Value = "" },
+
                 // For StampApprovedDocumentsActivity:
-                new Property { Name = "DocumentId",    Value = "33" },
-                new Property { Name = "requesterName", Value = "Ahmed Momeh" },
+                //new Property { Name = "DocumentId",    Value = "33" },
+                //new Property { Name = "requesterName", Value = "Ahmed Momeh" },
 
                 // For ArchiveEmployeeDocumentActivity:
                 //new Property { Name = "DocumentId",       Value = "24" },

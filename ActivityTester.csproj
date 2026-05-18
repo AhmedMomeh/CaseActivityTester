@@ -63,6 +63,8 @@
   <!-- Compile every custom activity from the sibling folder (recursively) into this test host. -->
   <ItemGroup>
     <Compile Include="..\Case Code Activity Classes\**\*.cs" />
+    <!-- Temporary dedupe: the same class lives in two folders. Exclude one copy for the harness. -->
+    <Compile Remove="..\Case Code Activity Classes\HR\Short listed Candidate List\ArchiveDocumentsToDMSActivity.cs" />
   </ItemGroup>
 
   <!-- Copy the Portal appsettings.json next to the test exe so the Intalio data layer
