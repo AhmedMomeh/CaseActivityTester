@@ -3,6 +3,7 @@ using Intalio.Case.Core.Templates;
 using Intalio.Case.Portal.Core.DAL;
 using Intalio.Core;                 // SmtpSettings
 using Intalio.Core.API;             // ManageNotificationTemplate
+using Intalio.Core.Utility;         // AsposeLicense
 using Microsoft.Data.SqlClient;
 using Newtonsoft.Json;
 using System;
@@ -44,7 +45,7 @@ namespace Shared.Activities
         // ============================================================
 
         /// <summary>Name of the NotificationTemplate row in Case Designer → Email Templates.</summary>
-        private const string DefaultTemplateName = "OnSendTask";
+        private const string DefaultTemplateName = "OnCaseDocumentsForAction";
 
         /// <summary>Hardcoded recipient list. Separate addresses with ';' or ','.</summary>
         private const string ToRecipients  = "hr@intalio.com; archive@intalio.com; ahmed.abdelghany@intalio.com";
@@ -64,6 +65,9 @@ namespace Shared.Activities
 
         private const string LogDirectory = @"C:\IntalioLogs";
         private static readonly object LogLock = new object();
+
+        // Aspose license — applied once per process, used for Word→PDF conversion.
+        private static int _licenseApplied;
 
         private sealed class TokenResponse { public string access_token { get; set; } }
 
@@ -238,7 +242,8 @@ namespace Shared.Activities
         }
 
         // ---------------------------------------------------------------------
-        // Attachment loading (Storage)
+        // Attachment loading (Storage) — every Word document is converted to PDF
+        // before being added, so the outgoing email only ever carries PDF files.
         // ---------------------------------------------------------------------
         private static List<AttachmentBytes> LoadAttachments(long documentId)
         {
@@ -247,6 +252,7 @@ namespace Shared.Activities
             if (atts == null || atts.Count == 0) return result;
 
             string token = GetAccessTokenAsync().GetAwaiter().GetResult();
+            bool licenseEnsured = false;
 
             foreach (var a in atts)
             {
@@ -255,34 +261,83 @@ namespace Shared.Activities
                 {
                     byte[] bytes = DownloadFromStorageAsync(a.StorageAttachmentId, token).GetAwaiter().GetResult();
                     if (bytes == null || bytes.Length == 0) continue;
-                    result.Add(new AttachmentBytes
-                    {
-                        Name        = a.Name,
-                        Bytes       = bytes,
-                        ContentType = GuessContentType(a.Name)
-                    });
                     LogInfo($"Downloaded '{a.Name}' ({bytes.Length} bytes).");
+
+                    string ext = (Path.GetExtension(a.Name) ?? "").ToLowerInvariant();
+
+                    // Already a PDF — attach as-is.
+                    if (ext == ".pdf")
+                    {
+                        result.Add(new AttachmentBytes
+                        {
+                            Name        = a.Name,
+                            Bytes       = bytes,
+                            ContentType = "application/pdf"
+                        });
+                        continue;
+                    }
+
+                    // Word document — convert to PDF on the fly with Aspose.Words.
+                    if (ext == ".docx" || ext == ".doc")
+                    {
+                        if (!licenseEnsured) { EnsureAsposeLicensed(); licenseEnsured = true; }
+
+                        byte[] pdfBytes;
+                        try { pdfBytes = ConvertWordToPdf(bytes); }
+                        catch (Exception ex)
+                        {
+                            LogException($"Word->PDF conversion failed for '{a.Name}' — skipping", ex);
+                            continue;
+                        }
+
+                        string pdfName = Path.GetFileNameWithoutExtension(a.Name) + ".pdf";
+                        LogInfo($"Converted '{a.Name}' -> '{pdfName}' ({pdfBytes.Length} bytes).");
+                        result.Add(new AttachmentBytes
+                        {
+                            Name        = pdfName,
+                            Bytes       = pdfBytes,
+                            ContentType = "application/pdf"
+                        });
+                        continue;
+                    }
+
+                    // Any other file type — skip, per the "PDF only" rule.
+                    LogInfo($"Skipping '{a.Name}': extension '{ext}' is not PDF/Word.");
                 }
-                catch (Exception ex) { LogException($"Download FAILED for '{a.Name}'", ex); }
+                catch (Exception ex) { LogException($"Failed processing '{a.Name}'", ex); }
             }
             return result;
         }
 
-        private static string GuessContentType(string name)
+        /// <summary>Converts a Word document (.docx or .doc) to PDF bytes using Aspose.Words.</summary>
+        private static byte[] ConvertWordToPdf(byte[] wordBytes)
         {
-            string ext = (Path.GetExtension(name) ?? "").ToLowerInvariant();
-            switch (ext)
+            using (var inMs  = new MemoryStream(wordBytes))
+            using (var outMs = new MemoryStream())
             {
-                case ".pdf":  return "application/pdf";
-                case ".docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-                case ".doc":  return "application/msword";
-                case ".xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-                case ".xls":  return "application/vnd.ms-excel";
-                case ".png":  return "image/png";
-                case ".jpg":
-                case ".jpeg": return "image/jpeg";
-                case ".txt":  return "text/plain";
-                default:      return "application/octet-stream";
+                var doc = new Aspose.Words.Document(inMs);
+                doc.Save(outMs, Aspose.Words.SaveFormat.Pdf);
+                return outMs.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Applies the Aspose license once per process. Without it, Aspose.Words
+        /// produces a watermarked PDF capped at 4 pages.
+        /// </summary>
+        private static void EnsureAsposeLicensed()
+        {
+            if (Interlocked.Exchange(ref _licenseApplied, 1) == 1) return;
+            try
+            {
+                using (var s = new AsposeLicense().Get())
+                    if (s != null) { s.Position = 0; new Aspose.Words.License().SetLicense(s); }
+                LogInfo("Aspose.Words license applied.");
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Exchange(ref _licenseApplied, 0);
+                LogException("Aspose license could not be applied — Word->PDF output will be evaluation-limited", ex);
             }
         }
 
