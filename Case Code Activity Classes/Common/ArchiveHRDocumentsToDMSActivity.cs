@@ -1,6 +1,7 @@
 using Intalio.Case.Core.Objects;
 using Intalio.Case.Core.Templates;
 using Intalio.Case.Portal.Core.DAL;
+using Intalio.Core.Utility;     // AsposeLicense
 using Microsoft.Data.SqlClient;
 using Newtonsoft.Json;
 using System;
@@ -45,6 +46,9 @@ namespace Shared.Activities
         // Daily-rotated log: C:\IntalioLogs\ArchiveHRDocumentsToDMSActivity-YYYY-MM-DD.log
         private const string LogDirectory     = @"C:\IntalioLogs";
         private static readonly object LogLock = new object();
+
+        // Aspose.Words license — applied once per process for Word→PDF conversion.
+        private static int _licenseApplied;
 
         private sealed class TokenResponse { public string access_token { get; set; } }
         private sealed class FolderHit
@@ -105,12 +109,21 @@ namespace Shared.Activities
 
         // ---------------------------------------------------------------------
         // DMS archive flow
+        //
+        // We use ListByDocumentIdWithOriginalAsync so the result includes BOTH the
+        // template-generated original AND any additional user uploads — the older
+        // FindByDocumentId excluded the original, which caused the empty-list bug.
+        //
+        // For each attachment, if it's the original AND a Word document (.doc/.docx),
+        // we convert it to PDF via Aspose.Words before uploading so the DMS always
+        // gets a PDF for the case template. Additional attachments are uploaded
+        // unchanged (in whatever format the user originally uploaded).
         // ---------------------------------------------------------------------
         private async System.Threading.Tasks.Task ArchiveToDmsAsync(Document document, string workflowFolder, string referenceNumber)
         {
-            var attachments = new Attachment().FindByDocumentId(document.Id);
+            var attachments = await new Attachment().ListByDocumentIdWithOriginalAsync(document.Id);
             int total = attachments?.Count ?? 0;
-            LogInfo($"FindByDocumentId({document.Id}) returned {total} attachment(s).");
+            LogInfo($"ListByDocumentIdWithOriginalAsync({document.Id}) returned {total} attachment(s).");
             if (total == 0) return;
 
             string accessToken = await GetAccessTokenAsync();
@@ -144,7 +157,13 @@ namespace Shared.Activities
                     if (string.IsNullOrEmpty(attachment.StorageAttachmentId))
                     { LogWarn($"Skipping '{attachment.Name}' (id={attachment.Id}): missing StorageAttachmentId."); skipped++; continue; }
 
-                    LogInfo($"Attachment {attachment.Id} '{attachment.Name}' storageId={attachment.StorageAttachmentId} sizeDb={attachment.Size}");
+                    // Document.AttachmentId is the FK pointing at the case's main
+                    // (template-generated) attachment row. C# lifted equality
+                    // (long == long?) returns false when AttachmentId is null,
+                    // which is exactly what we want — so no extra null-check
+                    // and no spurious negation are needed.
+                    bool isOriginal = attachment.Id == document.AttachmentId;
+                    LogInfo($"Attachment {attachment.Id} '{attachment.Name}' storageId={attachment.StorageAttachmentId} sizeDb={attachment.Size} isOriginal={isOriginal}");
 
                     byte[] fileBytes;
                     try { fileBytes = await DownloadFromStorageAsync(attachment.StorageAttachmentId, accessToken); }
@@ -154,17 +173,69 @@ namespace Shared.Activities
                     { LogWarn($"Skipping '{attachment.Name}': empty bytes from storage."); skipped++; continue; }
                     LogInfo($"Downloaded '{attachment.Name}' ({fileBytes.Length} bytes).");
 
+                    // Determine final filename + bytes — convert Word→PDF only for the original document.
+                    string  uploadName  = attachment.Name;
+                    byte[]  uploadBytes = fileBytes;
+                    string  ext = (Path.GetExtension(attachment.Name) ?? "").ToLowerInvariant();
+                    if (isOriginal && (ext == ".doc" || ext == ".docx"))
+                    {
+                        try
+                        {
+                            EnsureAsposeLicensed();
+                            uploadBytes = ConvertWordToPdf(fileBytes);
+                            uploadName  = Path.GetFileNameWithoutExtension(attachment.Name) + ".pdf";
+                            LogInfo($"Converted original '{attachment.Name}' -> '{uploadName}' ({uploadBytes.Length} bytes) for DMS.");
+                        }
+                        catch (Exception ex)
+                        {
+                            LogException($"Word->PDF conversion FAILED for original '{attachment.Name}' — uploading the .docx as-is", ex);
+                            // Fall through with the original Word bytes/name.
+                        }
+                    }
+
                     try
                     {
-                        await UploadFileAsync(http, refFolderId, attachment.Name, fileBytes);
-                        LogInfo($"Uploaded '{attachment.Name}' to DMS folderId={refFolderId}.");
+                        await UploadFileAsync(http, refFolderId, uploadName, uploadBytes);
+                        LogInfo($"Uploaded '{uploadName}' to DMS folderId={refFolderId}.");
                         uploaded++;
                     }
                     catch (Exception ex)
-                    { LogException($"Upload FAILED for '{attachment.Name}' to folderId={refFolderId}", ex); failed++; }
+                    { LogException($"Upload FAILED for '{uploadName}' to folderId={refFolderId}", ex); failed++; }
                 }
 
                 LogInfo($"Archive summary: total={total}  uploaded={uploaded}  skipped={skipped}  failed={failed}");
+            }
+        }
+
+        /// <summary>Convert a Word document (.docx or .doc) to PDF bytes via Aspose.Words.</summary>
+        private static byte[] ConvertWordToPdf(byte[] wordBytes)
+        {
+            using (var inMs  = new MemoryStream(wordBytes))
+            using (var outMs = new MemoryStream())
+            {
+                var doc = new Aspose.Words.Document(inMs);
+                doc.Save(outMs, Aspose.Words.SaveFormat.Pdf);
+                return outMs.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Applies the Aspose.Words license once per process. Without it, Aspose
+        /// produces an evaluation-mode PDF (4-page cap + watermark).
+        /// </summary>
+        private static void EnsureAsposeLicensed()
+        {
+            if (Interlocked.Exchange(ref _licenseApplied, 1) == 1) return;
+            try
+            {
+                using (var s = new AsposeLicense().Get())
+                    if (s != null) { s.Position = 0; new Aspose.Words.License().SetLicense(s); }
+                LogInfo("Aspose.Words license applied.");
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Exchange(ref _licenseApplied, 0);
+                LogException("Aspose license could not be applied — Word->PDF output will be evaluation-limited", ex);
             }
         }
 

@@ -231,6 +231,12 @@ namespace ActivityTester
                 DumpType("Intalio.Case.Portal.Core.DAL.Document");
                 return 0;
             }
+            const bool dumpAttachmentList = false;
+            if (dumpAttachmentList)
+            {
+                DumpType("Intalio.Case.Portal.Core.DAL.Attachment", grep: "ListByDocumentId|ListOriginal|FindByDocumentId|FindNonAdditional|Async");
+                return 0;
+            }
             if (dumpIdentityHelperFields)
             {
                 var t = Type.GetType("Intalio.Core.API.IdentityHelper, Intalio.Core");
@@ -374,7 +380,7 @@ namespace ActivityTester
             var props = new PropertyCollection
             {
                 // For BuildApprovalHistoryActivity:
-                new Property { Name = "DocumentId",       Value = "82" },
+                new Property { Name = "DocumentId",       Value = "81" },
                 new Property { Name = "approvalHistory",  Value = "" },
 
                 // For StampApprovedDocumentsActivity:
