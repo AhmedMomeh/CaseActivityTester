@@ -368,27 +368,28 @@ namespace ActivityTester
             // 3) Press F5 in Visual Studio (or run Run.cmd from this folder).
             // ===================================================================
 
-            ActivityTemplate activity = new ArchiveHRDocumentsToDMSActivity();
+            //ActivityTemplate activity = new ArchiveHRDocumentsToDMSActivity();
             //ActivityTemplate activity = new ArchiveResumeActivity();
             //ActivityTemplate activity = new ChangeStatusToClosedActivity();
             //ActivityTemplate activity = new HRRouteContractByGradeActivity();
             //ActivityTemplate activity = new NextApprovalRoleActivity();
             //ActivityTemplate activity = new IPO_IssuanceOfPurchaseOrder_RouteByAmountActivity();
             //ActivityTemplate activity = new StampApprovedDocumentsActivity();
+            ActivityTemplate activity = new BuildApprovalHistoryActivity();
             //  ActivityTemplate activity = new BuildApprovalHistoryActivity();
 
             var props = new PropertyCollection
             {
                 // For BuildApprovalHistoryActivity:
-                new Property { Name = "DocumentId",       Value = "81" },
-                new Property { Name = "approvalHistory",  Value = "" },
+                new Property { Name = "DocumentId",       Value = "89" },
+                new Property { Name = "approvalHistory",  Value = "89" },
 
                 // For StampApprovedDocumentsActivity:
-                //new Property { Name = "DocumentId",    Value = "33" },
+                //new Property { Name = "DocumentId",    Value = "89" },
                 //new Property { Name = "requesterName", Value = "Ahmed Momeh" },
 
                 // For ArchiveEmployeeDocumentActivity:
-                //new Property { Name = "DocumentId",       Value = "24" },
+                //new Property { Name = "DocumentId",       Value = "89" },
                 //new Property { Name = "EmployeeId",       Value = "3"   },
                 //new Property { Name = "DocumentCategory", Value = "Letters" },
 

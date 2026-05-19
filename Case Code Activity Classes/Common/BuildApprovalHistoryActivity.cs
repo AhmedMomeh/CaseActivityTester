@@ -107,18 +107,30 @@ namespace Shared.Activities
                 LogInfo($"Loaded {approvals.Count} approval(s) from task history.");
                 if (approvals.Count == 0) { LogInfo("Nothing to render."); return; }
 
-                // 2. Find the case's main PDF attachment.
-                var att = FindMainAttachment(documentId);
-                if (att == null) { LogWarn($"No PDF attachment found on document {documentId} — aborting."); return; }
-                LogInfo($"Target attachment id={att.Id} name='{att.Name}' storageId='{att.StorageAttachmentId}'");
-
-                // 3. Resolve approver display names + department names via IAM.
+                // 2. Resolve approver display names + department names via IAM.
+                //    Done up-front so both the form update and the (optional) file
+                //    rewrite see the same enriched data.
                 string token = GetTokenAsync().GetAwaiter().GetResult();
                 ResolveApproverNamesAndDepartments(approvals, token);
 
-                // 4. Update Document.Form.approvalHistory so the form's editGrid shows the
-                //    same list under the Application Metadata tab.
+                // 3. Update Document.Form.approvalHistory — ALWAYS, even when the
+                //    case has no PDF/DOCX attachment to append a table to. This is
+                //    what populates the editGrid on the Application Metadata tab,
+                //    so it's the most important side-effect of the activity.
                 UpdateFormApprovalHistory(documentId, approvals);
+
+                // 4. Find the case's main attachment (PDF or DOCX). If there isn't
+                //    one yet (e.g. the workflow hasn't generated the document at
+                //    this step) we skip the file rewrite and finish successfully —
+                //    the form update above already happened.
+                var att = FindMainAttachment(documentId);
+                if (att == null)
+                {
+                    LogInfo($"No PDF/DOCX attachment on document {documentId} yet — form table updated; nothing to rewrite.");
+                    LogInfo($"---- END    DocumentId={documentId}  result=success (form-only) ----");
+                    return;
+                }
+                LogInfo($"Target attachment id={att.Id} name='{att.Name}' storageId='{att.StorageAttachmentId}'");
 
                 // 5. Download the file, rewrite per format (.pdf or .docx), upload back.
                 byte[] inBytes  = DownloadAsync(att.StorageAttachmentId, token).GetAwaiter().GetResult();
@@ -128,7 +140,7 @@ namespace Shared.Activities
                 ReplaceAsync(att.StorageAttachmentId, att.Name, att.ContentType, outBytes, token)
                     .GetAwaiter().GetResult();
 
-                LogInfo($"Wrote {approvals.Count} row(s) — pdfBytes={inBytes.Length}->{outBytes.Length}");
+                LogInfo($"Wrote {approvals.Count} row(s) — bytes={inBytes.Length}->{outBytes.Length}");
                 LogInfo($"---- END    DocumentId={documentId}  result=success ----");
             }
             catch (Exception ex)
