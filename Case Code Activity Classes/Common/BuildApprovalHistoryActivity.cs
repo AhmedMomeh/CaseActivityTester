@@ -28,18 +28,43 @@ namespace Shared.Activities
     public class BuildApprovalHistoryActivity : ActivityTemplate
     {
         // -------- Config --------
+
+        #region Deveploment
         private const string IamBaseUrl        = "http://localhost:11111";
         private const string StorageBaseUrl    = "http://localhost:44444/";
-        private const string AuthClientId      = "42faa0d5-9856-4639-9d73-36a5fb6bb561";
-        private const string AuthClientSecret  = "5b83f635-35d6-4d87-bda4-bbd471ce26c2";
+        private const string AuthCaseClientId      = "42faa0d5-9856-4639-9d73-36a5fb6bb561";
+        private const string AuthCaseClientSecret  = "5b83f635-35d6-4d87-bda4-bbd471ce26c2";
         private const string AuthUserName      = "admin";
         private const string AuthUserPassword  = "1";
+        private const string LogDirectory = @"C:\Logs\Case";
+        #endregion
+
+        #region Staging
+        //private const string IamBaseUrl = "http://uciamdev.unioncoop.ae";       
+        //private const string StorageBaseUrl = "http://ucstoragedev.unioncoop.ae/";
+        //private const string AuthCaseClientId = "840fe558-9085-4d8c-ba81-9e442fde7409";
+        //private const string AuthCaseClientSecret = "4c6f2153-69af-490e-a6b5-8e928048500e";
+        //private const string AuthUserName = "admin";
+        //private const string AuthUserPassword = "1";
+        //private const string LogDirectory = @"C:\Logs\Case";
+        #endregion
+
+        #region Production
+        //private const string IamBaseUrl = "https://uciam.unioncoop.ae";       
+        //private const string StorageBaseUrl = "https://ucstorage.unioncoop.ae/";
+        //private const string AuthCaseClientId = "840fe558-9085-4d8c-ba81-9e442fde7409";
+        //private const string AuthCaseClientSecret = "4c6f2153-69af-490e-a6b5-8e928048500e";
+        //private const string AuthUserName = "admin";
+        //private const string AuthUserPassword = "1"; 
+        //private const string LogDirectory = @"C:\Logs\Case";
+        #endregion
+
+
 
         // Visible heading text used both as the section title AND as the marker
         // that lets us identify and remove our own prior page on re-runs.
         private const string ApprovalPageMarker = "Approval History";
-
-        private const string LogDirectory = @"C:\IntalioLogs";
+        
         private static readonly object LogLock = new object();
         private static int _licenseApplied;
 
@@ -559,8 +584,8 @@ ORDER  BY X.ClosedDate;";
                 req.Content = new FormUrlEncodedContent(new List<KeyValuePair<string, string>>
                 {
                     new KeyValuePair<string, string>("grant_type",    "password"),
-                    new KeyValuePair<string, string>("client_id",     AuthClientId),
-                    new KeyValuePair<string, string>("client_secret", AuthClientSecret),
+                    new KeyValuePair<string, string>("client_id",     AuthCaseClientId),
+                    new KeyValuePair<string, string>("client_secret", AuthCaseClientSecret),
                     new KeyValuePair<string, string>("scope",         "IdentityServerApi"),
                     new KeyValuePair<string, string>("username",      AuthUserName),
                     new KeyValuePair<string, string>("password",      AuthUserPassword),

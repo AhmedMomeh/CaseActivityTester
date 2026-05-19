@@ -35,7 +35,7 @@ namespace Shared.Activities
         private const string AuthUserPassword = "1";
 
         // Daily-rotated log: C:\IntalioLogs\StampApprovedDocumentsActivity-YYYY-MM-DD.log
-        private const string LogDirectory = @"C:\IntalioLogs";
+        private const string LogDirectory = @"C:\Logs\Case";
         private static readonly object LogLock = new object();
 
         // Aspose license is applied once per process. Unlicensed Aspose stamps

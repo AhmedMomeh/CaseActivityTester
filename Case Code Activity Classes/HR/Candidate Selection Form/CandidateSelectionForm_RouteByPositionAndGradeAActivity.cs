@@ -3,11 +3,16 @@ using Intalio.Case.Core.Templates;
 using Intalio.Case.Portal.Core.DAL;
 using System;
 using System.Globalization;
+using System.IO;
+using System.Threading;
 
 namespace Shared.Activities
 {
     public class CandidateSelectionForm_RouteByPositionAndGradeAActivity : ActivityTemplate
     {
+        private const string LogDirectory = @"C:\Logs\Case";
+        private static readonly object LogLock = new object();
+
         #region Business rules 
 
         /// <summary>
@@ -45,27 +50,48 @@ namespace Shared.Activities
 
         public override void Execute(WorkflowItem workflowItem)
         {
-            string position = GetProp(workflowItem, "positionCategory");
-            string grade = GetProp(workflowItem, "gradeLevel");
-
-            string nextApprovalRoute;
-            if (IsException(position))
+            string documentIdStr = GetProp(workflowItem, "DocumentId");
+            LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeAActivity BEGIN  DocumentId={documentIdStr} ----");
+            if (!long.TryParse(documentIdStr, out long documentId) || documentId <= 0)
             {
-                // Rule 1: any of the four protected roles -> Board of Directors approval.
-                nextApprovalRoute = "BoDApproval";
-            }
-            else if (IsSenior(grade))
-            {
-                // Rule 2: Grade A-D non-exception -> CEO approval.
-                nextApprovalRoute = "CEOApproval";
-            }
-            else
-            {
-                // Rule 3: Grade E/F (or unknown) non-exception -> CPCO was final.
-                nextApprovalRoute = "Direct";
+                LogError($"Invalid DocumentId: '{documentIdStr}'");
+                return;
             }
 
-            SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
+            try
+            {
+
+                string position = GetProp(workflowItem, "positionCategory");
+                string grade = GetProp(workflowItem, "gradeLevel");
+
+                string nextApprovalRoute;
+                if (IsException(position))
+                {
+                    // Rule 1: any of the four protected roles -> Board of Directors approval.
+                    nextApprovalRoute = "BoDApproval";
+                }
+                else if (IsSenior(grade))
+                {
+                    // Rule 2: Grade A-D non-exception -> CEO approval.
+                    nextApprovalRoute = "CEOApproval";
+                }
+                else
+                {
+                    // Rule 3: Grade E/F (or unknown) non-exception -> CPCO was final.
+                    nextApprovalRoute = "Direct";
+                }
+
+                SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
+
+                LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeAActivity nextApprovalRoute={nextApprovalRoute} ");
+
+                LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeAActivity END    DocumentId={documentId}  result=success ----");
+            }
+            catch (Exception ex)
+            {
+                LogException("Execute() failed", ex);
+                LogInfo($"----  CandidateSelectionForm_RouteByPositionAndGradeAActivity END    DocumentId={documentIdStr}  result=FAILED ----");            
+            }
         }
 
         public override void Complete(WorkflowItem workflowItem) { }
@@ -94,5 +120,39 @@ namespace Shared.Activities
 
         private static void SetProp(WorkflowItem i, string k, object v)
         { if (i?.Properties == null) return; try { var p = i.Properties[k]; if (p != null) p.Value = v; } catch { } }
+
+        private static void LogInfo(string m) { Write("INFO ", m); }
+        private static void LogWarn(string m) { Write("WARN ", m); }
+        private static void LogError(string m) { Write("ERROR", m); }
+
+        private static void LogException(string context, Exception ex)
+        {
+            var sb = new System.Text.StringBuilder().Append(context).Append(": ");
+            int depth = 0;
+            for (var e = ex; e != null; e = e.InnerException, depth++)
+            {
+                if (depth > 0) sb.Append(" --> ");
+                sb.Append('[').Append(e.GetType().FullName).Append("] ").Append(e.Message);
+            }
+            Write("ERROR", sb.ToString());
+            Write("ERROR", "STACK: " + (ex.StackTrace ?? "(no stack)"));
+        }
+
+        private static void Write(string level, string message)
+        {
+            try
+            {
+                string path = Path.Combine(LogDirectory,
+                    "CandidateSelectionForm_RouteByPositionAndGradeAActivity-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
+                string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + level
+                            + "  [tid:" + Thread.CurrentThread.ManagedThreadId + "]  " + message + Environment.NewLine;
+                lock (LogLock)
+                {
+                    Directory.CreateDirectory(LogDirectory);
+                    File.AppendAllText(path, line, System.Text.Encoding.UTF8);
+                }
+            }
+            catch { }
+        }
     }
 }

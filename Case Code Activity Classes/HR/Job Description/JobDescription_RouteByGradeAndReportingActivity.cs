@@ -3,11 +3,16 @@ using Intalio.Case.Core.Templates;
 using Intalio.Case.Portal.Core.DAL;
 using System;
 using System.Globalization;
+using System.IO;
+using System.Threading;
 
 namespace Shared.Activities
 {
     public class JobDescription_RouteByGradeAndReportingActivity : ActivityTemplate
     {
+        private const string LogDirectory = @"C:\Logs\Case";
+        private static readonly object LogLock = new object();
+
         #region Business rules 
 
         // Business rules (per the Job Description DOA matrix):
@@ -49,27 +54,47 @@ namespace Shared.Activities
 
         public override void Execute(WorkflowItem workflowItem)
         {
-            string grade = GetProp(workflowItem, "gradeLevel");
-            bool isDirectReportee = ParseBool(GetProp(workflowItem, "isDirectReporteeToCEO"));
-
-            string nextApprovalRoute;
-            if (isDirectReportee)
+            string documentIdStr = GetProp(workflowItem, "DocumentId");
+            LogInfo($"---- JobDescription_RouteByGradeAndReportingActivity BEGIN  DocumentId={documentIdStr} ----");
+            if (!long.TryParse(documentIdStr, out long documentId) || documentId <= 0)
             {
-                // CEO direct reportee — straight to CEO, skip CHRO.
-                nextApprovalRoute = "CEODirect";
-            }
-            else if (IsSenior(grade))
-            {
-                // Grade A-D — CHRO then CEO.
-                nextApprovalRoute = "CHROAndCEO";
-            }
-            else
-            {
-                // Grade E / F — Dept Head approval is final.
-                nextApprovalRoute = "Direct";
+                LogError($"Invalid DocumentId: '{documentIdStr}'");
+                return;
             }
 
-            SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
+            try
+            {
+                string grade = GetProp(workflowItem, "gradeLevel");
+                bool isDirectReportee = ParseBool(GetProp(workflowItem, "isDirectReporteeToCEO"));
+
+                string nextApprovalRoute;
+                if (isDirectReportee)
+                {
+                    // CEO direct reportee — straight to CEO, skip CHRO.
+                    nextApprovalRoute = "CEODirect";
+                }
+                else if (IsSenior(grade))
+                {
+                    // Grade A-D — CHRO then CEO.
+                    nextApprovalRoute = "CHROAndCEO";
+                }
+                else
+                {
+                    // Grade E / F — Dept Head approval is final.
+                    nextApprovalRoute = "Direct";
+                }
+
+                SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
+
+                LogInfo($"---- JobDescription_RouteByGradeAndReportingActivity nextApprovalRole={nextApprovalRoute} ");
+
+                LogInfo($"---- JobDescription_RouteByGradeAndReportingActivity END    DocumentId={documentId}  result=success ----");
+            }
+            catch (Exception ex)
+            {
+                LogException("Execute() failed", ex);
+                LogInfo($"----  JobDescription_RouteByGradeAndReportingActivity END    DocumentId={documentIdStr}  result=FAILED ----");
+            }
         }
 
         public override void Complete(WorkflowItem workflowItem) { }
@@ -96,5 +121,39 @@ namespace Shared.Activities
 
         private static void SetProp(WorkflowItem i, string k, object v)
         { if (i?.Properties == null) return; try { var p = i.Properties[k]; if (p != null) p.Value = v; } catch { } }
+
+        private static void LogInfo(string m) { Write("INFO ", m); }
+        private static void LogWarn(string m) { Write("WARN ", m); }
+        private static void LogError(string m) { Write("ERROR", m); }
+
+        private static void LogException(string context, Exception ex)
+        {
+            var sb = new System.Text.StringBuilder().Append(context).Append(": ");
+            int depth = 0;
+            for (var e = ex; e != null; e = e.InnerException, depth++)
+            {
+                if (depth > 0) sb.Append(" --> ");
+                sb.Append('[').Append(e.GetType().FullName).Append("] ").Append(e.Message);
+            }
+            Write("ERROR", sb.ToString());
+            Write("ERROR", "STACK: " + (ex.StackTrace ?? "(no stack)"));
+        }
+
+        private static void Write(string level, string message)
+        {
+            try
+            {
+                string path = Path.Combine(LogDirectory,
+                    "JobDescription_RouteByGradeAndReportingActivity-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
+                string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + level
+                            + "  [tid:" + Thread.CurrentThread.ManagedThreadId + "]  " + message + Environment.NewLine;
+                lock (LogLock)
+                {
+                    Directory.CreateDirectory(LogDirectory);
+                    File.AppendAllText(path, line, System.Text.Encoding.UTF8);
+                }
+            }
+            catch { }
+        }
     }
 }

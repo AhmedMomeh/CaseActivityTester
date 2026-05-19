@@ -44,26 +44,54 @@ namespace Shared.Activities
         //                 CONFIGURATION
         // ============================================================
 
-        /// <summary>Name of the NotificationTemplate row in Case Designer → Email Templates.</summary>
-        private const string DefaultTemplateName = "OnCaseDocumentsForAction";
-
-        /// <summary>Hardcoded recipient list. Separate addresses with ';' or ','.</summary>
-        private const string ToRecipients  = "hr@intalio.com; archive@intalio.com; ahmed.abdelghany@intalio.com";
-        private const string CcRecipients  = "";
-        private const string BccRecipients = "";
-
-        /// <summary>"From" display name (the address itself comes from SmtpSettings.SystemEmail).</summary>
-        private const string FromDisplayName = "Case Notifications";
-
-        // IAM + Storage (for downloading attachment bytes only — no SMTP credentials here).
+        #region Deveploment
         private const string IamBaseUrl       = "http://localhost:11111";
         private const string StorageBaseUrl   = "http://localhost:44444/";
-        private const string AuthClientId     = "398ff3ac-49b6-44fd-a70b-3cd69874c118";
-        private const string AuthClientSecret = "ac63daac-edd5-496a-834f-e14a0e76c5c0";
+        private const string AuthCaseClientId     = "398ff3ac-49b6-44fd-a70b-3cd69874c118";
+        private const string AuthCaseClientSecret = "ac63daac-edd5-496a-834f-e14a0e76c5c0";
         private const string AuthUserName     = "admin";
         private const string AuthUserPassword = "1";
+        private const string LogDirectory = @"C:\Logs\Case";
 
-        private const string LogDirectory = @"C:\IntalioLogs";
+        private const string FromDisplayName = "Case Notifications";
+        private const string ToRecipients = "hr@intalio.com; archive@intalio.com; ahmed.abdelghany@intalio.com";
+        private const string CcRecipients = "";
+        private const string BccRecipients = "";
+        private const string DefaultTemplateName = "OnCaseDocumentsForAction";
+        #endregion
+
+        #region Staging
+        //private const string IamBaseUrl = "http://uciamdev.unioncoop.ae";        
+        //private const string StorageBaseUrl = "http://ucstoragedev.unioncoop.ae/";
+        //private const string AuthCaseClientId = "ffcd9846-0390-4792-94f5-43eefb2c0eae";
+        //private const string AuthCaseClientSecret = "ebc9af9d-4b49-4e0d-a50b-c792b53e63b8";
+        //private const string AuthUserName = "admin";
+        //private const string AuthUserPassword = "1";   
+        //private const string LogDirectory = @"C:\Logs\Case";
+
+        //private const string FromDisplayName = "Case Notifications";
+        //private const string ToRecipients = "hr@intalio.com; archive@intalio.com; ahmed.abdelghany@intalio.com";
+        //private const string CcRecipients = "";
+        //private const string BccRecipients = "";
+        //private const string DefaultTemplateName = "OnCaseDocumentsForAction";
+        #endregion
+
+        #region Production
+        //private const string IamBaseUrl = "https://uciam.unioncoop.ae";        
+        //private const string StorageBaseUrl = "https://ucstorage.unioncoop.ae/";
+        //private const string AuthCaseClientId = "ffcd9846-0390-4792-94f5-43eefb2c0eae";
+        //private const string AuthCaseClientSecret = "ebc9af9d-4b49-4e0d-a50b-c792b53e63b8";
+        //private const string AuthUserName = "admin";
+        //private const string AuthUserPassword = "1";
+        //private const string LogDirectory = @"C:\Logs\Case";
+
+        //private const string FromDisplayName = "Case Notifications";
+        //private const string ToRecipients = "hr@intalio.com; archive@intalio.com; ahmed.abdelghany@intalio.com";
+        //private const string CcRecipients = "";
+        //private const string BccRecipients = "";
+        //private const string DefaultTemplateName = "OnCaseDocumentsForAction";
+        #endregion
+
         private static readonly object LogLock = new object();
 
         // Aspose license — applied once per process, used for Word→PDF conversion.
@@ -397,8 +425,8 @@ WHERE  d.Id = @docId;";
                 req.Content = new FormUrlEncodedContent(new List<KeyValuePair<string, string>>
                 {
                     new KeyValuePair<string, string>("grant_type",    "password"),
-                    new KeyValuePair<string, string>("client_id",     AuthClientId),
-                    new KeyValuePair<string, string>("client_secret", AuthClientSecret),
+                    new KeyValuePair<string, string>("client_id",     AuthCaseClientId),
+                    new KeyValuePair<string, string>("client_secret", AuthCaseClientSecret),
                     new KeyValuePair<string, string>("scope",         "IdentityServerApi"),
                     new KeyValuePair<string, string>("username",      AuthUserName),
                     new KeyValuePair<string, string>("password",      AuthUserPassword),

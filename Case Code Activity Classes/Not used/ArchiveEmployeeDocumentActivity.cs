@@ -28,7 +28,7 @@ namespace Shared.Activities
         private const string HrCabinetName   = "HRE";
 
         // Daily-rotated log file: C:\IntalioLogs\ArchiveEmployeeDocumentActivity-YYYY-MM-DD.log
-        private const string LogDirectory    = @"C:\IntalioLogs";
+        private const string LogDirectory    = @"C:\Logs\Case";
         private static readonly object LogLock = new object();
 
         private sealed class TokenResponse { public string access_token { get; set; } }

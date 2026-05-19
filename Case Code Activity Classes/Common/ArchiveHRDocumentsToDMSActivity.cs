@@ -33,18 +33,46 @@ namespace Shared.Activities
     internal class ArchiveHRDocumentsToDMSActivity : ActivityTemplate
     {
         // -------- STATIC CONFIG --------
-        private const string IamBaseUrl       = "http://localhost:11111";
-        private const string DmsBaseUrl       = "http://localhost:8080/DMS/";
-        private const string StorageBaseUrl   = "http://localhost:44444/";
-        private const string DmsClientId      = "398ff3ac-49b6-44fd-a70b-3cd69874c118";
-        private const string DmsClientSecret  = "ac63daac-edd5-496a-834f-e14a0e76c5c0";
-        private const string DmsUserName      = "admin";
-        private const string DmsUserPassword  = "1";
-        private const string DmsUserId        = "1"; // numeric DMS user id — required header for IntegrationService/UploadPage
-        private const string HrCabinetName    = "HRE";
 
-        // Daily-rotated log: C:\IntalioLogs\ArchiveHRDocumentsToDMSActivity-YYYY-MM-DD.log
-        private const string LogDirectory     = @"C:\IntalioLogs";
+        #region Deveploment
+        private const string IamBaseUrl = "http://localhost:11111";
+        private const string DmsBaseUrl = "http://localhost:8080/DMS/";
+        private const string StorageBaseUrl = "http://localhost:44444/";
+        private const string DmsClientId = "398ff3ac-49b6-44fd-a70b-3cd69874c118";
+        private const string DmsClientSecret = "ac63daac-edd5-496a-834f-e14a0e76c5c0";
+        private const string DmsUserName = "admin";
+        private const string DmsUserPassword = "1";
+        private const string DmsUserId = "1"; // Id from user table numeric DMS user id — required header for IntegrationService/UploadPage
+        private const string HrCabinetName = "HRE";
+        private const string LogDirectory = @"C:\Logs\Case";
+        #endregion
+
+        #region Staging
+        //private const string IamBaseUrl = "http://uciamdev.unioncoop.ae";
+        //private const string DmsBaseUrl = "http://ucdmsdev.unioncoop.ae/DMS/";
+        //private const string StorageBaseUrl = "http://ucstoragedev.unioncoop.ae/";
+        //private const string DmsClientId = "ffcd9846-0390-4792-94f5-43eefb2c0eae";
+        //private const string DmsClientSecret = "ebc9af9d-4b49-4e0d-a50b-c792b53e63b8";
+        //private const string DmsUserName = "admin";
+        //private const string DmsUserPassword = "1";
+        //private const string DmsUserId = "1"; // Id from user table numeric DMS user id — required header for IntegrationService/UploadPage
+        //private const string HrCabinetName = "HRE";
+        //private const string LogDirectory = @"C:\Logs\Case";
+        #endregion
+
+        #region Production
+        //private const string IamBaseUrl = "https://uciam.unioncoop.ae";
+        //private const string DmsBaseUrl = "https://dms.unioncoop.ae/DMS/";
+        //private const string StorageBaseUrl = "https://ucstorage.unioncoop.ae/";
+        //private const string DmsClientId = "ffcd9846-0390-4792-94f5-43eefb2c0eae";
+        //private const string DmsClientSecret = "ebc9af9d-4b49-4e0d-a50b-c792b53e63b8";
+        //private const string DmsUserName = "admin";
+        //private const string DmsUserPassword = "1";
+        //private const string DmsUserId = "1"; // Id from user table numeric DMS user id — required header for IntegrationService/UploadPage
+        //private const string HrCabinetName = "HRE";
+        //private const string LogDirectory = @"C:\Logs\Case";
+        #endregion
+
         private static readonly object LogLock = new object();
 
         // Aspose.Words license — applied once per process for Word→PDF conversion.
