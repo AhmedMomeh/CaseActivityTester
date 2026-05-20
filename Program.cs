@@ -131,9 +131,26 @@ namespace ActivityTester
             // The Portal's Startup populates static Configuration props from appsettings.json.
             // We replicate the minimum the activity needs. (Calling ConfigureSystem() would
             // also run EF migrations against the live DB, which we don't want from a debug tool.)
-            Intalio.Case.Core.Configuration.DbConnectionString =
+            // NOTE: there are TWO independent Configuration classes that each own a separate
+            // DbConnectionString static, used by two different DbContexts pointing at the
+            // same DB:
+            //   * Intalio.Case.Core.Configuration  -> Case.Core DAL (Document, Attachment, …)
+            //   * Intalio.Core.Configuration       -> Core DAL      (NotificationTemplate, User, …)
+            // Set both, otherwise the second DbContext throws "ConnectionString property has
+            // not been initialized" the moment something like NotificationTemplate.FindByName
+            // tries to open a connection.
+            const string DbConnString =
                 "Server=.;Database=UC_Case;MultipleActiveResultSets=true;Integrated Security=True;TrustServerCertificate=true;";
+            Intalio.Case.Core.Configuration.DbConnectionString = DbConnString;
             Intalio.Case.Portal.Core.Configuration.StorageServerUrl = "http://localhost:44444/";
+
+            // Intalio.Core's own Configuration class lives in a different namespace and
+            // doesn't expose DbConnectionString at the top level — the property is on a
+            // nested/sibling class whose exact path differs between minor versions. Use
+            // reflection to find every static settable string property named
+            // "*ConnectionString" inside the Intalio.Core assembly and set it. Cheap,
+            // version-agnostic, and self-documenting (logs which ones it sets).
+            SetIntalioCoreConnectionStrings(DbConnString);
 
             // ===== TEMP DIAGNOSTIC: where are the attachments for this document? =====
             // Flip to true to dump every Attachment lookup method + raw SQL for one doc.
@@ -452,6 +469,53 @@ namespace ActivityTester
                 Console.Error.WriteLine("==> FAILED");
                 DumpException(ex);
                 return 1;
+            }
+        }
+
+        // Sets every static-settable string property named "*ConnectionString" found
+        // on types declared in the Intalio.Core assembly. Both the property name and the
+        // declaring type's namespace vary across Intalio versions (Intalio.Core.Configuration,
+        // Intalio.Core.DatabaseConfiguration, Intalio.Core.DAL.Configuration, etc.), so we
+        // discover them dynamically and log every hit, making mismatches obvious.
+        private static void SetIntalioCoreConnectionStrings(string value)
+        {
+            try
+            {
+                var asm = System.Reflection.Assembly.Load("Intalio.Core");
+                int hits = 0;
+                Type[] types;
+                try { types = asm.GetTypes(); }
+                catch (System.Reflection.ReflectionTypeLoadException ex)
+                { types = ex.Types.Where(t => t != null).ToArray(); }
+
+                foreach (var t in types)
+                {
+                    if (t == null || t.IsGenericTypeDefinition) continue;
+                    foreach (var p in t.GetProperties(System.Reflection.BindingFlags.Public
+                                                   | System.Reflection.BindingFlags.NonPublic
+                                                   | System.Reflection.BindingFlags.Static))
+                    {
+                        if (!p.CanWrite) continue;
+                        if (p.PropertyType != typeof(string)) continue;
+                        if (!p.Name.EndsWith("ConnectionString", StringComparison.Ordinal)) continue;
+                        try
+                        {
+                            p.SetValue(null, value);
+                            Console.WriteLine($"  set {t.FullName}.{p.Name}");
+                            hits++;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"  FAILED {t.FullName}.{p.Name}: {ex.Message}");
+                        }
+                    }
+                }
+                if (hits == 0)
+                    Console.WriteLine("  WARN: no *ConnectionString static property found in Intalio.Core");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  WARN: couldn't reflect Intalio.Core for connection strings: {ex.Message}");
             }
         }
 
