@@ -15,16 +15,29 @@ namespace ActivityTester
 {
     internal static class PortalResolver
     {
+        // The Portal install is still probed AS A FALLBACK (useful on a developer
+        // machine that has the full Portal installed). The PRIMARY source is now
+        // the local "lib/" + "runtimes/" folders copied next to the executable —
+        // those are bundled into git so the project runs on machines where the
+        // Portal isn't installed.
         public const string PortalDir = @"C:\Program Files\Intalio\UC_CasePortal";
 
-        private static readonly string NativeDir =
-            Path.Combine(PortalDir, "runtimes", Rid(), "native");
+        // AppContext.BaseDirectory = the folder containing the .exe (bin\Debug\net8.0\
+        // when developing, or wherever the published binaries land in production).
+        private static readonly string AppDir    = AppContext.BaseDirectory;
+        private static readonly string LocalLib  = AppDir;                            // lib\*.dll get copied flat into bin
+        private static readonly string LocalRids = Path.Combine(AppDir, "runtimes");  // lib\runtimes\... preserved by csproj
+        private static readonly string NativeDirAppLocal = Path.Combine(LocalRids, Rid(), "native");
+        private static readonly string NativeDirPortal   = Path.Combine(PortalDir, "runtimes", Rid(), "native");
 
-        // Managed-assembly probe order. RID-specific paths come FIRST because for
-        // some packages (e.g. Microsoft.Data.SqlClient) the flat-folder DLL is a
-        // PlatformNotSupported stub and the real implementation lives under
-        // runtimes/<rid>/lib/<tfm>/. We probe net8 → net7 → net6 to mirror the way
-        // the runtime would pick the closest-compatible TFM.
+        // Managed-assembly probe order: local-lib paths win first (so a developer
+        // machine still uses the bundled DLLs by default), Portal install is the
+        // fallback (handy when newer Portal DLLs are available locally). Within
+        // each location, RID-specific paths come FIRST because for some packages
+        // (e.g. Microsoft.Data.SqlClient) the flat-folder DLL is a stub and the
+        // real implementation lives under runtimes/<rid>/lib/<tfm>/. Probe order
+        // within each base: rid-specific → os-family → unix → flat. TFM tried
+        // newest → oldest (net8 → net6).
         private static readonly string[] ProbeDirs = BuildProbeDirs();
 
         // Runs before any other code in this assembly, including Main. Registering the
@@ -44,16 +57,18 @@ namespace ActivityTester
             };
 
             // Native deps (Microsoft.Data.SqlClient.SNI, libSkiaSharp, harfbuzz, etc.)
-            // live under runtimes/<rid>/native in the Portal install. Map P/Invoke
-            // lookups there.
+            // come from the local lib first, fall back to Portal install.
             AssemblyLoadContext.Default.ResolvingUnmanagedDll += (assembly, libraryName) =>
             {
-                if (!Directory.Exists(NativeDir)) return IntPtr.Zero;
-                foreach (var name in new[] { libraryName, libraryName + ".dll" })
+                foreach (var dir in new[] { NativeDirAppLocal, NativeDirPortal })
                 {
-                    string p = Path.Combine(NativeDir, name);
-                    if (File.Exists(p) && NativeLibrary.TryLoad(p, out var handle))
-                        return handle;
+                    if (!Directory.Exists(dir)) continue;
+                    foreach (var name in new[] { libraryName, libraryName + ".dll" })
+                    {
+                        string p = Path.Combine(dir, name);
+                        if (File.Exists(p) && NativeLibrary.TryLoad(p, out var handle))
+                            return handle;
+                    }
                 }
                 return IntPtr.Zero;
             };
@@ -66,12 +81,19 @@ namespace ActivityTester
                         RuntimeInformation.IsOSPlatform(OSPlatform.OSX)     ? "osx" : "unix";
             string rid = Rid();
             var dirs = new System.Collections.Generic.List<string>();
-            // RID/<tfm> — preferred (real impls live here)
+
+            // ----- Local app-folder probes (preferred) -----
+            foreach (var family in new[] { rid, os, "unix" })
+            foreach (var tfm    in new[] { "net8.0", "net7.0", "net6.0" })
+                dirs.Add(Path.Combine(LocalRids, family, "lib", tfm));
+            dirs.Add(LocalLib);                       // flat copies in bin
+
+            // ----- Portal-install probes (fallback) -----
             foreach (var family in new[] { rid, os, "unix" })
             foreach (var tfm    in new[] { "net8.0", "net7.0", "net6.0" })
                 dirs.Add(Path.Combine(PortalDir, "runtimes", family, "lib", tfm));
-            // Flat folder — last (often only the stub for platform-specific packages)
             dirs.Add(PortalDir);
+
             return dirs.ToArray();
         }
 
@@ -97,9 +119,14 @@ namespace ActivityTester
     {
         private static int Main(string[] args)
         {
-            // Work from the Portal directory so the data layer finds appsettings.json,
-            // license files, and native dependencies exactly the way the Portal does.
-            Directory.SetCurrentDirectory(PortalResolver.PortalDir);
+            // Work from the app's own directory so the data layer finds the bundled
+            // appsettings.json + license + native deps. If the bin folder doesn't
+            // have an appsettings.json (older build) fall back to the Portal dir
+            // when it exists, otherwise keep the current working directory.
+            string preferredDir = AppContext.BaseDirectory;
+            if (!File.Exists(Path.Combine(preferredDir, "appsettings.json")) && Directory.Exists(PortalResolver.PortalDir))
+                preferredDir = PortalResolver.PortalDir;
+            Directory.SetCurrentDirectory(preferredDir);
 
             // The Portal's Startup populates static Configuration props from appsettings.json.
             // We replicate the minimum the activity needs. (Calling ConfigureSystem() would

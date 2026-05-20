@@ -8,62 +8,80 @@
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <PortalDir>C:\Program Files\Intalio\UC_CasePortal</PortalDir>
+
+    <!-- Local bundle directory — Intalio runtime DLLs ship inside this repo so the
+         project can be built and run on a machine where the Portal isn't installed.
+         The folder layout mirrors a slice of the Portal install:
+             lib\<dll>.dll                              ← managed assemblies
+             lib\runtimes\win\lib\net6.0\<dll>.dll      ← RID-specific managed
+             lib\runtimes\win-x64\native\<dll>          ← native deps (SkiaSharp, SqlClient SNI, …) -->
+    <LibDir>$(MSBuildThisFileDirectory)lib</LibDir>
   </PropertyGroup>
 
-  <!-- Portal is an ASP.NET app; pulling in its shared framework gives us EF Core's
-       transitive Microsoft.Extensions.* (Caching, DependencyInjection, etc.) without
-       having to copy them or probe for them. -->
+  <!-- The bundled assemblies were built against the ASP.NET Core 8.0 shared framework
+       (EF Core, Microsoft.Extensions.*, etc.) — pulling that in gives us all the
+       transitives the Intalio DLLs need at runtime without re-copying them. -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
-  <!-- Intalio assemblies — referenced for compile only; resolved at runtime from PortalDir. -->
+  <!-- Bundled assemblies — referenced for compile AND copied to the output folder
+       so the resulting bin\ folder is fully portable. -->
   <ItemGroup>
     <Reference Include="Intalio.Case.Core">
-      <HintPath>$(PortalDir)\Intalio.Case.Core.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>$(LibDir)\Intalio.Case.Core.dll</HintPath>
+      <Private>true</Private>
     </Reference>
     <Reference Include="Intalio.Case.Portal.Core">
-      <HintPath>$(PortalDir)\Intalio.Case.Portal.Core.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>$(LibDir)\Intalio.Case.Portal.Core.dll</HintPath>
+      <Private>true</Private>
     </Reference>
     <Reference Include="Intalio.Core">
-      <HintPath>$(PortalDir)\Intalio.Core.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>$(LibDir)\Intalio.Core.dll</HintPath>
+      <Private>true</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
-      <HintPath>$(PortalDir)\Newtonsoft.Json.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>$(LibDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>true</Private>
     </Reference>
-    <!-- Reference the RID-specific (real) SqlClient for compile; runtime resolver loads
-         the same file. The flat-folder SqlClient is the PlatformNotSupported stub. -->
+    <!-- The RID-specific SqlClient is the real implementation; the flat-folder
+         copy that ships with the NuGet package is a PlatformNotSupported stub. -->
     <Reference Include="Microsoft.Data.SqlClient">
-      <HintPath>$(PortalDir)\runtimes\win\lib\net6.0\Microsoft.Data.SqlClient.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>$(LibDir)\runtimes\win\lib\net6.0\Microsoft.Data.SqlClient.dll</HintPath>
+      <Private>true</Private>
     </Reference>
-    <!-- Aspose libs are loaded by the Portal at runtime; reference them for compile. -->
     <Reference Include="Aspose.PDF">
-      <HintPath>$(PortalDir)\Aspose.PDF.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>$(LibDir)\Aspose.PDF.dll</HintPath>
+      <Private>true</Private>
     </Reference>
     <Reference Include="Aspose.Words">
-      <HintPath>$(PortalDir)\Aspose.Words.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>$(LibDir)\Aspose.Words.dll</HintPath>
+      <Private>true</Private>
     </Reference>
-    <!-- Aspose.Words exposes a SetImage(SKBitmap) overload, so the compiler needs
-         SkiaSharp referenced for overload resolution even when we only call the
-         stream-based overload. -->
+    <!-- Aspose.Words has a SetImage(SKBitmap) overload, so the compiler needs
+         SkiaSharp referenced for overload resolution. -->
     <Reference Include="SkiaSharp">
-      <HintPath>$(PortalDir)\SkiaSharp.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>$(LibDir)\SkiaSharp.dll</HintPath>
+      <Private>true</Private>
     </Reference>
   </ItemGroup>
 
-  <!-- Copy the Portal appsettings.json next to the test exe so the Intalio data layer
-       finds its connection string and settings the same way the Portal does. -->
+  <!-- Copy the entire lib\ tree to the output folder so RID-specific managed DLLs
+       (Microsoft.Data.SqlClient) and native deps (SkiaSharp, SqlClient SNI) end
+       up alongside the executable.  The PortalResolver in Program.cs probes this
+       same layout at runtime, so identical paths work in dev and at deploy time. -->
   <ItemGroup>
-    <None Include="$(PortalDir)\appsettings.json" Link="appsettings.json">
+    <None Include="lib\runtimes\**\*.*">
+      <Link>runtimes\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- appsettings.json — bundled locally so the activity harness works without the
+       Portal install.  Override values from inside Program.cs (DbConnectionString,
+       StorageServerUrl, etc.) if your target machine uses different endpoints. -->
+  <ItemGroup>
+    <None Include="lib\appsettings.json" Condition="Exists('lib\appsettings.json')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
