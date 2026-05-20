@@ -87,28 +87,25 @@
   </ItemGroup>
 
   <!-- Runtime-only assemblies — loaded reflectively by the Intalio DLLs (EF Core
-       and its providers) so they aren't named in our source and don't need
-       <Reference>. The shared ASP.NET Core 8 framework does NOT include EF Core or
-       any DB providers, so on a clean machine these would be missing at runtime.
-       The Portal's CasePortalContext.OnConfiguring touches all four providers (it
-       picks one based on the connection string at runtime) so ALL four must be
-       present even when we only talk to SQL Server. Each provider also drags its
-       own managed DB client (MySqlConnector / Npgsql / Oracle.ManagedDataAccess). -->
+       and its providers, Microsoft.Data.SqlClient, Aspose pipelines, …) so they
+       aren't named in our source. The shared ASP.NET Core 8 framework does NOT
+       include EF Core, any DB providers, System.Configuration.ConfigurationManager,
+       Microsoft.SqlServer.Server, etc. — these would be missing at runtime on a
+       clean server.
+       Approach: copy EVERY .dll in lib\ to the output (excluding the ones already
+       handled by explicit <Reference> entries above, which copy themselves via
+       <Private>true</Private>). The .NET runtime only loads what's actually
+       referenced at runtime, so extras sit harmlessly on disk. This keeps us out
+       of the whack-a-mole loop where each deploy surfaces another missing DLL. -->
   <ItemGroup>
-    <None Include="lib\Microsoft.EntityFrameworkCore*.dll;
-                   lib\Microsoft.Bcl.AsyncInterfaces.dll;
-                   lib\Pomelo.EntityFrameworkCore.MySql.dll;
-                   lib\Npgsql.EntityFrameworkCore.PostgreSQL.dll;
-                   lib\Oracle.EntityFrameworkCore.dll;
-                   lib\MySqlConnector.dll;
-                   lib\Npgsql.dll;
-                   lib\Oracle.ManagedDataAccess.dll;
-
-                   lib\System.*.dll;
-                   lib\Microsoft.Identity.*.dll;
-                   lib\Microsoft.IdentityModel.*.dll;
-                   lib\Azure.Core.dll;
-                   lib\Azure.Identity.dll">
+    <None Include="lib\*.dll"
+          Exclude="lib\Intalio.Case.Core.dll;
+                   lib\Intalio.Case.Portal.Core.dll;
+                   lib\Intalio.Core.dll;
+                   lib\Newtonsoft.Json.dll;
+                   lib\Aspose.PDF.dll;
+                   lib\Aspose.Words.dll;
+                   lib\SkiaSharp.dll">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
