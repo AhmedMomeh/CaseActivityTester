@@ -86,4 +86,19 @@
     </None>
   </ItemGroup>
 
+  <!-- Runtime-only assemblies — loaded reflectively by the Intalio DLLs (EF Core)
+       so they aren't named in our source and don't need <Reference>. The shared
+       ASP.NET Core 8 framework does NOT include EF Core, so on a machine without
+       the Portal installed these would otherwise be missing, producing a runtime
+       FileNotFoundException for Microsoft.EntityFrameworkCore. Copying them to
+       bin\ lets the PortalResolver in Program.cs find them in the local probe
+       step before falling back to the Portal install. Microsoft.Bcl.AsyncInterfaces
+       is an EF Core dependency that isn't in the shared framework either. -->
+  <ItemGroup>
+    <None Include="lib\Microsoft.EntityFrameworkCore*.dll;lib\Microsoft.Bcl.AsyncInterfaces.dll">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

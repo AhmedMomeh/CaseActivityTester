@@ -402,8 +402,11 @@ namespace ActivityTester
             //ActivityTemplate activity = new NextApprovalRoleActivity();
             //ActivityTemplate activity = new IPO_IssuanceOfPurchaseOrder_RouteByAmountActivity();
             //ActivityTemplate activity = new StampApprovedDocumentsActivity();
-            ActivityTemplate activity = new BuildApprovalHistoryActivity();
+            //ActivityTemplate activity = new BuildApprovalHistoryActivity();
             //  ActivityTemplate activity = new BuildApprovalHistoryActivity();
+
+            SendCaseDocumentsEmailActivity activity = new SendCaseDocumentsEmailActivity();
+
 
             var props = new PropertyCollection
             {
