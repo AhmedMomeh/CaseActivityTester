@@ -102,7 +102,13 @@
                    lib\Oracle.EntityFrameworkCore.dll;
                    lib\MySqlConnector.dll;
                    lib\Npgsql.dll;
-                   lib\Oracle.ManagedDataAccess.dll">
+                   lib\Oracle.ManagedDataAccess.dll;
+
+                   lib\System.*.dll;
+                   lib\Microsoft.Identity.*.dll;
+                   lib\Microsoft.IdentityModel.*.dll;
+                   lib\Azure.Core.dll;
+                   lib\Azure.Identity.dll">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
