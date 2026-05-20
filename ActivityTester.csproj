@@ -86,16 +86,23 @@
     </None>
   </ItemGroup>
 
-  <!-- Runtime-only assemblies — loaded reflectively by the Intalio DLLs (EF Core)
-       so they aren't named in our source and don't need <Reference>. The shared
-       ASP.NET Core 8 framework does NOT include EF Core, so on a machine without
-       the Portal installed these would otherwise be missing, producing a runtime
-       FileNotFoundException for Microsoft.EntityFrameworkCore. Copying them to
-       bin\ lets the PortalResolver in Program.cs find them in the local probe
-       step before falling back to the Portal install. Microsoft.Bcl.AsyncInterfaces
-       is an EF Core dependency that isn't in the shared framework either. -->
+  <!-- Runtime-only assemblies — loaded reflectively by the Intalio DLLs (EF Core
+       and its providers) so they aren't named in our source and don't need
+       <Reference>. The shared ASP.NET Core 8 framework does NOT include EF Core or
+       any DB providers, so on a clean machine these would be missing at runtime.
+       The Portal's CasePortalContext.OnConfiguring touches all four providers (it
+       picks one based on the connection string at runtime) so ALL four must be
+       present even when we only talk to SQL Server. Each provider also drags its
+       own managed DB client (MySqlConnector / Npgsql / Oracle.ManagedDataAccess). -->
   <ItemGroup>
-    <None Include="lib\Microsoft.EntityFrameworkCore*.dll;lib\Microsoft.Bcl.AsyncInterfaces.dll">
+    <None Include="lib\Microsoft.EntityFrameworkCore*.dll;
+                   lib\Microsoft.Bcl.AsyncInterfaces.dll;
+                   lib\Pomelo.EntityFrameworkCore.MySql.dll;
+                   lib\Npgsql.EntityFrameworkCore.PostgreSQL.dll;
+                   lib\Oracle.EntityFrameworkCore.dll;
+                   lib\MySqlConnector.dll;
+                   lib\Npgsql.dll;
+                   lib\Oracle.ManagedDataAccess.dll">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
