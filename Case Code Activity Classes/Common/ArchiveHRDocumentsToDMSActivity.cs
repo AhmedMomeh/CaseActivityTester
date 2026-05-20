@@ -33,45 +33,79 @@ namespace Shared.Activities
     internal class ArchiveHRDocumentsToDMSActivity : ActivityTemplate
     {
         // -------- STATIC CONFIG --------
+        // All environment-specific values come from the host's appsettings.json
+        // under the "CaseActivities" section, so dev/staging/production share the
+        // same compiled DLL. DmsUserId is the numeric DMS user id required by the
+        // IntegrationService/UploadPage X-User-Id header. See CodeActivityConfig.cs.
+        // IAM URL + user account are shared across activities (IAM section).
+        // The DMS endpoint + its OAuth client live together under DmsAuth.
+        private static readonly string IamBaseUrl       = CodeActivityConfig.Get("CaseActivities:IAM:IamBaseUrl");
+        private static readonly string DmsUserName      = CodeActivityConfig.Get("CaseActivities:IAM:UserName");
+        private static readonly string DmsUserPassword  = CodeActivityConfig.Get("CaseActivities:IAM:UserPassword");
+        private static readonly string StorageBaseUrl   = CodeActivityConfig.Get("CaseActivities:StorageBaseUrl");
+        private static readonly string DmsBaseUrl       = CodeActivityConfig.Get("CaseActivities:DmsAuth:DmsBaseUrl");
+        private static readonly string DmsClientId      = CodeActivityConfig.Get("CaseActivities:DmsAuth:ClientId");
+        private static readonly string DmsClientSecret  = CodeActivityConfig.Get("CaseActivities:DmsAuth:ClientSecret");
+        private static readonly string DmsUserId        = CodeActivityConfig.Get("CaseActivities:DmsAuth:UserId");
+        private static readonly string LogDirectory     = CodeActivityConfig.Get("CaseActivities:LogDirectory");
 
-        #region Deveploment
-        private const string IamBaseUrl = "http://localhost:11111";
-        private const string DmsBaseUrl = "http://localhost:8080/DMS/";
-        private const string StorageBaseUrl = "http://localhost:44444/";
-        private const string DmsClientId = "398ff3ac-49b6-44fd-a70b-3cd69874c118";
-        private const string DmsClientSecret = "ac63daac-edd5-496a-834f-e14a0e76c5c0";
-        private const string DmsUserName = "admin";
-        private const string DmsUserPassword = "1";
-        private const string DmsUserId = "1"; // Id from user table numeric DMS user id — required header for IntegrationService/UploadPage
+        // The DMS root folder this HR-specific activity writes into. Hardcoded
+        // because the activity name itself ("HR…ToDMS") binds it to this cabinet.
         private const string HrCabinetName = "HRE";
-        private const string LogDirectory = @"C:\Logs\Case";
-        #endregion
 
-        #region Staging
-        //private const string IamBaseUrl = "http://uciamdev.unioncoop.ae";
-        //private const string DmsBaseUrl = "http://ucdmsdev.unioncoop.ae/DMS/";
-        //private const string StorageBaseUrl = "http://ucstoragedev.unioncoop.ae/";
-        //private const string DmsClientId = "ffcd9846-0390-4792-94f5-43eefb2c0eae";
-        //private const string DmsClientSecret = "ebc9af9d-4b49-4e0d-a50b-c792b53e63b8";
-        //private const string DmsUserName = "admin";
-        //private const string DmsUserPassword = "1";
-        //private const string DmsUserId = "1"; // Id from user table numeric DMS user id — required header for IntegrationService/UploadPage
-        //private const string HrCabinetName = "HRE";
-        //private const string LogDirectory = @"C:\Logs\Case";
-        #endregion
+        // Configuration reader — kept INSIDE this activity class so the file is
+        // self-contained for Case Designer's single-file code-activity editor.
+        private static class CodeActivityConfig
+        {
+            private static Newtonsoft.Json.Linq.JObject _root;
+            private static string _path;
+            private static readonly object _gate = new object();
 
-        #region Production
-        //private const string IamBaseUrl = "https://uciam.unioncoop.ae";
-        //private const string DmsBaseUrl = "https://dms.unioncoop.ae/DMS/";
-        //private const string StorageBaseUrl = "https://ucstorage.unioncoop.ae/";
-        //private const string DmsClientId = "ffcd9846-0390-4792-94f5-43eefb2c0eae";
-        //private const string DmsClientSecret = "ebc9af9d-4b49-4e0d-a50b-c792b53e63b8";
-        //private const string DmsUserName = "admin";
-        //private const string DmsUserPassword = "1";
-        //private const string DmsUserId = "1"; // Id from user table numeric DMS user id — required header for IntegrationService/UploadPage
-        //private const string HrCabinetName = "HRE";
-        //private const string LogDirectory = @"C:\Logs\Case";
-        #endregion
+            public static string Get(string keyPath)           => Resolve(keyPath, allowEmpty: false);
+            public static string GetAllowEmpty(string keyPath) => Resolve(keyPath, allowEmpty: true);
+
+            private static string Resolve(string keyPath, bool allowEmpty)
+            {
+                Load();
+                Newtonsoft.Json.Linq.JToken node = _root;
+                foreach (var part in keyPath.Split(':'))
+                {
+                    if (node is Newtonsoft.Json.Linq.JObject obj &&
+                        obj.TryGetValue(part, System.StringComparison.OrdinalIgnoreCase, out var next))
+                        node = next;
+                    else
+                        throw new System.InvalidOperationException(
+                            $"Missing required setting '{keyPath}' in '{_path}'. " +
+                            $"Add the key under 'CaseActivities' in the host appsettings.json.");
+                }
+                if (node == null || node.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is null in '{_path}'.");
+                string value = node.ToString();
+                if (!allowEmpty && string.IsNullOrEmpty(value))
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is empty in '{_path}'. Set a non-empty value.");
+                return value;
+            }
+
+            private static void Load()
+            {
+                if (_root != null) return;
+                lock (_gate)
+                {
+                    if (_root != null) return;
+                    foreach (var p in new[] {
+                        System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "appsettings.json"),
+                        System.IO.Path.Combine(System.AppContext.BaseDirectory,            "appsettings.json") })
+                    {
+                        if (!System.IO.File.Exists(p)) continue;
+                        _root = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(p));
+                        _path = p;
+                        return;
+                    }
+                    throw new System.InvalidOperationException(
+                        "appsettings.json not found in current directory or app base directory.");
+                }
+            }
+        }
 
         private static readonly object LogLock = new object();
 

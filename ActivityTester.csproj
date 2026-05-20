@@ -82,6 +82,7 @@
        StorageServerUrl, etc.) if your target machine uses different endpoints. -->
   <ItemGroup>
     <None Include="lib\appsettings.json" Condition="Exists('lib\appsettings.json')">
+      <Link>appsettings.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

@@ -10,27 +10,82 @@ namespace Shared.Activities
 {
     public class JobDescription_RouteByGradeAndReportingActivity : ActivityTemplate
     {
-        private const string LogDirectory = @"C:\Logs\Case";
+        private static readonly string LogDirectory = CodeActivityConfig.Get("CaseActivities:LogDirectory");
+
+        // Configuration reader â€” kept INSIDE this activity class so the file is
+        // self-contained for Case Designer's single-file code-activity editor.
+        private static class CodeActivityConfig
+        {
+            private static Newtonsoft.Json.Linq.JObject _root;
+            private static string _path;
+            private static readonly object _gate = new object();
+
+            public static string Get(string keyPath)           => Resolve(keyPath, allowEmpty: false);
+            public static string GetAllowEmpty(string keyPath) => Resolve(keyPath, allowEmpty: true);
+
+            private static string Resolve(string keyPath, bool allowEmpty)
+            {
+                Load();
+                Newtonsoft.Json.Linq.JToken node = _root;
+                foreach (var part in keyPath.Split(':'))
+                {
+                    if (node is Newtonsoft.Json.Linq.JObject obj &&
+                        obj.TryGetValue(part, System.StringComparison.OrdinalIgnoreCase, out var next))
+                        node = next;
+                    else
+                        throw new System.InvalidOperationException(
+                            $"Missing required setting '{keyPath}' in '{_path}'. " +
+                            $"Add the key under 'CaseActivities' in the host appsettings.json.");
+                }
+                if (node == null || node.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is null in '{_path}'.");
+                string value = node.ToString();
+                if (!allowEmpty && string.IsNullOrEmpty(value))
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is empty in '{_path}'. Set a non-empty value.");
+                return value;
+            }
+
+            private static void Load()
+            {
+                if (_root != null) return;
+                lock (_gate)
+                {
+                    if (_root != null) return;
+                    foreach (var p in new[] {
+                        System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "appsettings.json"),
+                        System.IO.Path.Combine(System.AppContext.BaseDirectory,            "appsettings.json") })
+                    {
+                        if (!System.IO.File.Exists(p)) continue;
+                        _root = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(p));
+                        _path = p;
+                        return;
+                    }
+                    throw new System.InvalidOperationException(
+                        "appsettings.json not found in current directory or app base directory.");
+                }
+            }
+        }
+
         private static readonly object LogLock = new object();
 
         #region Business rules 
 
         // Business rules (per the Job Description DOA matrix):
         //
-        //   1. <b>Direct CEO reportees</b> — if the position reports directly to
+        //   1. <b>Direct CEO reportees</b> ï¿½ if the position reports directly to
         //      the CEO (form field <c>isDirectReporteeToCEO == true</c>), the JD is
         //      escalated straight to the CEO. The CHRO step is intentionally skipped
         //      because the CEO is the line manager and approving the JD themselves
         //      supersedes the CHRO review.
         //        -> nextApprovalRoute = "CEODirect"
         //
-        //   2. <b>Grade A, B, C, or D (senior roles)</b> — JDs at these grades
+        //   2. <b>Grade A, B, C, or D (senior roles)</b> ï¿½ JDs at these grades
         //      require both CHRO endorsement and CEO sign-off. CHRO reviews HR
         //      consistency (job family, banding, compensation alignment); CEO
         //      provides final approval.
         //        -> nextApprovalRoute = "CHROAndCEO"
         //
-        //   3. <b>Grade E or F (operational roles)</b> — no further escalation
+        //   3. <b>Grade E or F (operational roles)</b> ï¿½ no further escalation
         //      beyond the Dept Head / AD HR step that has already completed.
         //        -> nextApprovalRoute = "Direct"
         //
@@ -70,17 +125,17 @@ namespace Shared.Activities
                 string nextApprovalRoute;
                 if (isDirectReportee)
                 {
-                    // CEO direct reportee — straight to CEO, skip CHRO.
+                    // CEO direct reportee ï¿½ straight to CEO, skip CHRO.
                     nextApprovalRoute = "CEODirect";
                 }
                 else if (IsSenior(grade))
                 {
-                    // Grade A-D — CHRO then CEO.
+                    // Grade A-D ï¿½ CHRO then CEO.
                     nextApprovalRoute = "CHROAndCEO";
                 }
                 else
                 {
-                    // Grade E / F — Dept Head approval is final.
+                    // Grade E / F ï¿½ Dept Head approval is final.
                     nextApprovalRoute = "Direct";
                 }
 

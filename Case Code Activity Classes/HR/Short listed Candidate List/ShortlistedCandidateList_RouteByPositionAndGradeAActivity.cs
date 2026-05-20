@@ -10,7 +10,62 @@ namespace Shared.Activities
 {
     public class ShortlistedCandidateList_RouteByPositionAndGradeAActivity : ActivityTemplate
     {
-        private const string LogDirectory = @"C:\Logs\Case";
+        private static readonly string LogDirectory = CodeActivityConfig.Get("CaseActivities:LogDirectory");
+
+        // Configuration reader — kept INSIDE this activity class so the file is
+        // self-contained for Case Designer's single-file code-activity editor.
+        private static class CodeActivityConfig
+        {
+            private static Newtonsoft.Json.Linq.JObject _root;
+            private static string _path;
+            private static readonly object _gate = new object();
+
+            public static string Get(string keyPath)           => Resolve(keyPath, allowEmpty: false);
+            public static string GetAllowEmpty(string keyPath) => Resolve(keyPath, allowEmpty: true);
+
+            private static string Resolve(string keyPath, bool allowEmpty)
+            {
+                Load();
+                Newtonsoft.Json.Linq.JToken node = _root;
+                foreach (var part in keyPath.Split(':'))
+                {
+                    if (node is Newtonsoft.Json.Linq.JObject obj &&
+                        obj.TryGetValue(part, System.StringComparison.OrdinalIgnoreCase, out var next))
+                        node = next;
+                    else
+                        throw new System.InvalidOperationException(
+                            $"Missing required setting '{keyPath}' in '{_path}'. " +
+                            $"Add the key under 'CaseActivities' in the host appsettings.json.");
+                }
+                if (node == null || node.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is null in '{_path}'.");
+                string value = node.ToString();
+                if (!allowEmpty && string.IsNullOrEmpty(value))
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is empty in '{_path}'. Set a non-empty value.");
+                return value;
+            }
+
+            private static void Load()
+            {
+                if (_root != null) return;
+                lock (_gate)
+                {
+                    if (_root != null) return;
+                    foreach (var p in new[] {
+                        System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "appsettings.json"),
+                        System.IO.Path.Combine(System.AppContext.BaseDirectory,            "appsettings.json") })
+                    {
+                        if (!System.IO.File.Exists(p)) continue;
+                        _root = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(p));
+                        _path = p;
+                        return;
+                    }
+                    throw new System.InvalidOperationException(
+                        "appsettings.json not found in current directory or app base directory.");
+                }
+            }
+        }
+
         private static readonly object LogLock = new object();
 
         #region Business rules 

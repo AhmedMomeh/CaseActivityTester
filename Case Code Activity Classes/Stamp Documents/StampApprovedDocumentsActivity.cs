@@ -19,23 +19,80 @@ namespace Shared.Activities
     internal class StampApprovedDocumentsActivity : ActivityTemplate
     {
         // -------- STATIC CONFIG --------
-        private const string StampImagePath = @"C:\stamps\approved.png";
+        // All environment-specific values come from the host's appsettings.json
+        // under "CaseActivities". The image path, IAM endpoint, and credentials are
+        // all driven from there so the same DLL runs in dev/staging/production
+        // unchanged. See CodeActivityConfig.cs.
+        private static readonly string StampImagePath      = CodeActivityConfig.Get("CaseActivities:StampImagePath");
         private const float  StampWidthPt   = 120f;
         private const float  StampHeightPt  = 60f;
 
-        // The Storage server exposes /Storage/Download + /Storage/ReplaceNoVersioning,
-        // both protected by an IAM bearer
-        // token. These are NOT DMS constants — they're the credentials this code
-        // uses to authenticate against the Case Portal's storage service.
-        private const string IamBaseUrl       = "http://localhost:11111";
-        private const string StorageBaseUrl   = "http://localhost:44444/";
-        private const string AuthCaseClientId     = "42faa0d5-9856-4639-9d73-36a5fb6bb561";
-        private const string AuthCaseClientSecret = "5b83f635-35d6-4d87-bda4-bbd471ce26c2";
-        private const string AuthUserName     = "admin";
-        private const string AuthUserPassword = "1";
+        // IAM URL + user account are shared across activities (IAM section).
+        // The OAuth client (ClientId/ClientSecret) is the Case Portal app under CaseAuth.
+        private static readonly string IamBaseUrl          = CodeActivityConfig.Get("CaseActivities:IAM:IamBaseUrl");
+        private static readonly string AuthUserName        = CodeActivityConfig.Get("CaseActivities:IAM:UserName");
+        private static readonly string AuthUserPassword    = CodeActivityConfig.Get("CaseActivities:IAM:UserPassword");
+        private static readonly string StorageBaseUrl      = CodeActivityConfig.Get("CaseActivities:StorageBaseUrl");
+        private static readonly string AuthCaseClientId    = CodeActivityConfig.Get("CaseActivities:CaseAuth:ClientId");
+        private static readonly string AuthCaseClientSecret= CodeActivityConfig.Get("CaseActivities:CaseAuth:ClientSecret");
 
-        // Daily-rotated log: C:\IntalioLogs\StampApprovedDocumentsActivity-YYYY-MM-DD.log
-        private const string LogDirectory = @"C:\Logs\Case";
+        // Daily-rotated log: {LogDirectory}\StampApprovedDocumentsActivity-YYYY-MM-DD.log
+        private static readonly string LogDirectory        = CodeActivityConfig.Get("CaseActivities:LogDirectory");
+
+        // Configuration reader — kept INSIDE this activity class so the file is
+        // self-contained for Case Designer's single-file code-activity editor.
+        private static class CodeActivityConfig
+        {
+            private static Newtonsoft.Json.Linq.JObject _root;
+            private static string _path;
+            private static readonly object _gate = new object();
+
+            public static string Get(string keyPath)           => Resolve(keyPath, allowEmpty: false);
+            public static string GetAllowEmpty(string keyPath) => Resolve(keyPath, allowEmpty: true);
+
+            private static string Resolve(string keyPath, bool allowEmpty)
+            {
+                Load();
+                Newtonsoft.Json.Linq.JToken node = _root;
+                foreach (var part in keyPath.Split(':'))
+                {
+                    if (node is Newtonsoft.Json.Linq.JObject obj &&
+                        obj.TryGetValue(part, System.StringComparison.OrdinalIgnoreCase, out var next))
+                        node = next;
+                    else
+                        throw new System.InvalidOperationException(
+                            $"Missing required setting '{keyPath}' in '{_path}'. " +
+                            $"Add the key under 'CaseActivities' in the host appsettings.json.");
+                }
+                if (node == null || node.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is null in '{_path}'.");
+                string value = node.ToString();
+                if (!allowEmpty && string.IsNullOrEmpty(value))
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is empty in '{_path}'. Set a non-empty value.");
+                return value;
+            }
+
+            private static void Load()
+            {
+                if (_root != null) return;
+                lock (_gate)
+                {
+                    if (_root != null) return;
+                    foreach (var p in new[] {
+                        System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "appsettings.json"),
+                        System.IO.Path.Combine(System.AppContext.BaseDirectory,            "appsettings.json") })
+                    {
+                        if (!System.IO.File.Exists(p)) continue;
+                        _root = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(p));
+                        _path = p;
+                        return;
+                    }
+                    throw new System.InvalidOperationException(
+                        "appsettings.json not found in current directory or app base directory.");
+                }
+            }
+        }
+
         private static readonly object LogLock = new object();
 
         // Aspose license is applied once per process. Unlicensed Aspose stamps

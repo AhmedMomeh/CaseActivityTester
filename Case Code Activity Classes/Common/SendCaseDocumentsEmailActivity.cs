@@ -43,54 +43,82 @@ namespace Shared.Activities
         // ============================================================
         //                 CONFIGURATION
         // ============================================================
+        // All environment-specific values come from the host's appsettings.json
+        // under the "CaseActivities" section so dev/staging/production share the
+        // same compiled DLL. CcRecipients / BccRecipients allow empty values — the
+        // KEY must still exist in JSON, but an empty string means "send to no one
+        // in that field". See CodeActivityConfig.cs.
+        // IAM URL + user account are shared across activities (IAM section).
+        // The OAuth client (ClientId/ClientSecret) is the Case Portal app under CaseAuth.
+        private static readonly string IamBaseUrl          = CodeActivityConfig.Get("CaseActivities:IAM:IamBaseUrl");
+        private static readonly string AuthUserName        = CodeActivityConfig.Get("CaseActivities:IAM:UserName");
+        private static readonly string AuthUserPassword    = CodeActivityConfig.Get("CaseActivities:IAM:UserPassword");
+        private static readonly string StorageBaseUrl      = CodeActivityConfig.Get("CaseActivities:StorageBaseUrl");
+        private static readonly string AuthCaseClientId    = CodeActivityConfig.Get("CaseActivities:CaseAuth:ClientId");
+        private static readonly string AuthCaseClientSecret= CodeActivityConfig.Get("CaseActivities:CaseAuth:ClientSecret");
+        private static readonly string LogDirectory        = CodeActivityConfig.Get("CaseActivities:LogDirectory");
 
-        #region Deveploment
-        private const string IamBaseUrl       = "http://localhost:11111";
-        private const string StorageBaseUrl   = "http://localhost:44444/";
-        private const string AuthCaseClientId     = "398ff3ac-49b6-44fd-a70b-3cd69874c118";
-        private const string AuthCaseClientSecret = "ac63daac-edd5-496a-834f-e14a0e76c5c0";
-        private const string AuthUserName     = "admin";
-        private const string AuthUserPassword = "1";
-        private const string LogDirectory = @"C:\Logs\Case";
+        // Configuration reader — kept INSIDE this activity class so the file is
+        // self-contained for Case Designer's single-file code-activity editor.
+        // See BuildApprovalHistoryActivity for the canonical implementation;
+        // every activity carries its own private copy.
+        private static class CodeActivityConfig
+        {
+            private static Newtonsoft.Json.Linq.JObject _root;
+            private static string _path;
+            private static readonly object _gate = new object();
 
-        private const string FromDisplayName = "Case Notifications";
-        private const string ToRecipients = "hr@intalio.com; archive@intalio.com; ahmed.abdelghany@intalio.com";
-        private const string CcRecipients = "";
-        private const string BccRecipients = "";
-        private const string DefaultTemplateName = "OnCaseDocumentsForAction";
-        #endregion
+            public static string Get(string keyPath)           => Resolve(keyPath, allowEmpty: false);
+            public static string GetAllowEmpty(string keyPath) => Resolve(keyPath, allowEmpty: true);
 
-        #region Staging
-        //private const string IamBaseUrl = "http://uciamdev.unioncoop.ae";        
-        //private const string StorageBaseUrl = "http://ucstoragedev.unioncoop.ae/";
-        //private const string AuthCaseClientId = "ffcd9846-0390-4792-94f5-43eefb2c0eae";
-        //private const string AuthCaseClientSecret = "ebc9af9d-4b49-4e0d-a50b-c792b53e63b8";
-        //private const string AuthUserName = "admin";
-        //private const string AuthUserPassword = "1";   
-        //private const string LogDirectory = @"C:\Logs\Case";
+            private static string Resolve(string keyPath, bool allowEmpty)
+            {
+                Load();
+                Newtonsoft.Json.Linq.JToken node = _root;
+                foreach (var part in keyPath.Split(':'))
+                {
+                    if (node is Newtonsoft.Json.Linq.JObject obj &&
+                        obj.TryGetValue(part, System.StringComparison.OrdinalIgnoreCase, out var next))
+                        node = next;
+                    else
+                        throw new System.InvalidOperationException(
+                            $"Missing required setting '{keyPath}' in '{_path}'. " +
+                            $"Add the key under 'CaseActivities' in the host appsettings.json.");
+                }
+                if (node == null || node.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is null in '{_path}'.");
+                string value = node.ToString();
+                if (!allowEmpty && string.IsNullOrEmpty(value))
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is empty in '{_path}'. Set a non-empty value.");
+                return value;
+            }
 
-        //private const string FromDisplayName = "Case Notifications";
-        //private const string ToRecipients = "hr@intalio.com; archive@intalio.com; ahmed.abdelghany@intalio.com";
-        //private const string CcRecipients = "";
-        //private const string BccRecipients = "";
-        //private const string DefaultTemplateName = "OnCaseDocumentsForAction";
-        #endregion
+            private static void Load()
+            {
+                if (_root != null) return;
+                lock (_gate)
+                {
+                    if (_root != null) return;
+                    foreach (var p in new[] {
+                        System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "appsettings.json"),
+                        System.IO.Path.Combine(System.AppContext.BaseDirectory,            "appsettings.json") })
+                    {
+                        if (!System.IO.File.Exists(p)) continue;
+                        _root = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(p));
+                        _path = p;
+                        return;
+                    }
+                    throw new System.InvalidOperationException(
+                        "appsettings.json not found in current directory or app base directory.");
+                }
+            }
+        }
 
-        #region Production
-        //private const string IamBaseUrl = "https://uciam.unioncoop.ae";        
-        //private const string StorageBaseUrl = "https://ucstorage.unioncoop.ae/";
-        //private const string AuthCaseClientId = "ffcd9846-0390-4792-94f5-43eefb2c0eae";
-        //private const string AuthCaseClientSecret = "ebc9af9d-4b49-4e0d-a50b-c792b53e63b8";
-        //private const string AuthUserName = "admin";
-        //private const string AuthUserPassword = "1";
-        //private const string LogDirectory = @"C:\Logs\Case";
-
-        //private const string FromDisplayName = "Case Notifications";
-        //private const string ToRecipients = "hr@intalio.com; archive@intalio.com; ahmed.abdelghany@intalio.com";
-        //private const string CcRecipients = "";
-        //private const string BccRecipients = "";
-        //private const string DefaultTemplateName = "OnCaseDocumentsForAction";
-        #endregion
+        private static readonly string FromDisplayName     = CodeActivityConfig.Get("CaseActivities:Email:FromDisplayName");
+        private static readonly string ToRecipients        = CodeActivityConfig.Get("CaseActivities:Email:ToRecipients");
+        private static readonly string CcRecipients        = CodeActivityConfig.GetAllowEmpty("CaseActivities:Email:CcRecipients");
+        private static readonly string BccRecipients       = CodeActivityConfig.GetAllowEmpty("CaseActivities:Email:BccRecipients");
+        private static readonly string DefaultTemplateName = CodeActivityConfig.Get("CaseActivities:Email:DefaultTemplateName");
 
         private static readonly object LogLock = new object();
 

@@ -28,42 +28,81 @@ namespace Shared.Activities
     public class BuildApprovalHistoryActivity : ActivityTemplate
     {
         // -------- Config --------
-
-        #region Deveploment
-        private const string IamBaseUrl        = "http://localhost:11111";
-        private const string StorageBaseUrl    = "http://localhost:44444/";
-        private const string AuthCaseClientId      = "42faa0d5-9856-4639-9d73-36a5fb6bb561";
-        private const string AuthCaseClientSecret  = "5b83f635-35d6-4d87-bda4-bbd471ce26c2";
-        private const string AuthUserName      = "admin";
-        private const string AuthUserPassword  = "1";
-        private const string LogDirectory = @"C:\Logs\Case";
-        #endregion
-
-        #region Staging
-        //private const string IamBaseUrl = "http://uciamdev.unioncoop.ae";       
-        //private const string StorageBaseUrl = "http://ucstoragedev.unioncoop.ae/";
-        //private const string AuthCaseClientId = "840fe558-9085-4d8c-ba81-9e442fde7409";
-        //private const string AuthCaseClientSecret = "4c6f2153-69af-490e-a6b5-8e928048500e";
-        //private const string AuthUserName = "admin";
-        //private const string AuthUserPassword = "1";
-        //private const string LogDirectory = @"C:\Logs\Case";
-        #endregion
-
-        #region Production
-        //private const string IamBaseUrl = "https://uciam.unioncoop.ae";       
-        //private const string StorageBaseUrl = "https://ucstorage.unioncoop.ae/";
-        //private const string AuthCaseClientId = "840fe558-9085-4d8c-ba81-9e442fde7409";
-        //private const string AuthCaseClientSecret = "4c6f2153-69af-490e-a6b5-8e928048500e";
-        //private const string AuthUserName = "admin";
-        //private const string AuthUserPassword = "1"; 
-        //private const string LogDirectory = @"C:\Logs\Case";
-        #endregion
-
-
+        // All environment-specific values live in the host's appsettings.json under
+        // the "CaseActivities" section. The same compiled DLL works in dev/staging/
+        // production with no rebuild — operators edit the JSON instead. See
+        // CodeActivityConfig.cs for the lookup details. Missing keys throw a clear
+        // exception naming the file and key so misconfig is obvious.
+        // IAM URL + user account are shared across activities (IAM section).
+        // The OAuth client (ClientId/ClientSecret) is the Case Portal app under CaseAuth.
+        private static readonly string IamBaseUrl          = CodeActivityConfig.Get("CaseActivities:IAM:IamBaseUrl");
+        private static readonly string AuthUserName        = CodeActivityConfig.Get("CaseActivities:IAM:UserName");
+        private static readonly string AuthUserPassword    = CodeActivityConfig.Get("CaseActivities:IAM:UserPassword");
+        private static readonly string StorageBaseUrl      = CodeActivityConfig.Get("CaseActivities:StorageBaseUrl");
+        private static readonly string AuthCaseClientId    = CodeActivityConfig.Get("CaseActivities:CaseAuth:ClientId");
+        private static readonly string AuthCaseClientSecret= CodeActivityConfig.Get("CaseActivities:CaseAuth:ClientSecret");
+        private static readonly string LogDirectory        = CodeActivityConfig.Get("CaseActivities:LogDirectory");
 
         // Visible heading text used both as the section title AND as the marker
         // that lets us identify and remove our own prior page on re-runs.
         private const string ApprovalPageMarker = "Approval History";
+
+        // Configuration reader — kept INSIDE this activity class so the file is
+        // self-contained for Case Designer's single-file code-activity editor
+        // (Designer compiles one .cs at a time, so external helper classes are
+        // not visible). Reads the host's appsettings.json once and caches.
+        private static class CodeActivityConfig
+        {
+            private static Newtonsoft.Json.Linq.JObject _root;
+            private static string _path;
+            private static readonly object _gate = new object();
+
+            public static string Get(string keyPath)          => Resolve(keyPath, allowEmpty: false);
+            public static string GetAllowEmpty(string keyPath) => Resolve(keyPath, allowEmpty: true);
+
+            private static string Resolve(string keyPath, bool allowEmpty)
+            {
+                Load();
+                Newtonsoft.Json.Linq.JToken node = _root;
+                foreach (var part in keyPath.Split(':'))
+                {
+                    if (node is Newtonsoft.Json.Linq.JObject obj &&
+                        obj.TryGetValue(part, System.StringComparison.OrdinalIgnoreCase, out var next))
+                        node = next;
+                    else
+                        throw new System.InvalidOperationException(
+                            $"Missing required setting '{keyPath}' in '{_path}'. " +
+                            $"Add the key under 'CaseActivities' in the host appsettings.json.");
+                }
+                if (node == null || node.Type == Newtonsoft.Json.Linq.JTokenType.Null)
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is null in '{_path}'.");
+                string value = node.ToString();
+                if (!allowEmpty && string.IsNullOrEmpty(value))
+                    throw new System.InvalidOperationException($"Setting '{keyPath}' is empty in '{_path}'. Set a non-empty value.");
+                return value;
+            }
+
+            private static void Load()
+            {
+                if (_root != null) return;
+                lock (_gate)
+                {
+                    if (_root != null) return;
+                    foreach (var p in new[] {
+                        System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "appsettings.json"),
+                        System.IO.Path.Combine(System.AppContext.BaseDirectory,            "appsettings.json") })
+                    {
+                        if (!System.IO.File.Exists(p)) continue;
+                        _root = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(p));
+                        _path = p;
+                        return;
+                    }
+                    throw new System.InvalidOperationException(
+                        "appsettings.json not found in current directory or app base directory. " +
+                        "It must contain a 'CaseActivities' section for code activities to start.");
+                }
+            }
+        }
         
         private static readonly object LogLock = new object();
         private static int _licenseApplied;
