@@ -29,13 +29,13 @@ namespace ActivityTester.JdeMock.Services
         private readonly List<JobEntry> _jobs = new()
         {
             new() { JobCode = "IT132", JobTitleEnglish = "Assistant Manager Cloud & Infrastructure",
-                    Department = "101IT", DepartmentDescription = "Information Technology Dept." },
+                    Department = "101IT", DepartmentDescription = "Information Technology Dept." , PayGrade="A"},
             new() { JobCode = "IT131", JobTitleEnglish = "Senior Manager - Architecture Enterprise",
-                    Department = "101IT", DepartmentDescription = "Information Technology Dept." },
+                    Department = "101IT", DepartmentDescription = "Information Technology Dept." , PayGrade="B"},
             new() { JobCode = "HR101", JobTitleEnglish = "Senior HR Business Partner",
-                    Department = "101HR", DepartmentDescription = "Human Resources Dept." },
+                    Department = "101HR", DepartmentDescription = "Human Resources Dept." , PayGrade="C"},
             new() { JobCode = "FN201", JobTitleEnglish = "Finance Analyst",
-                    Department = "101FN", DepartmentDescription = "Finance Dept." },
+                    Department = "101FN", DepartmentDescription = "Finance Dept." , PayGrade = "D"},
         };
 
         // -------- Employees (known ones — anything else returns the JDE "null" placeholder) --------
