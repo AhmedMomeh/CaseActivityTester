@@ -82,20 +82,24 @@ function loadCurrentUserFromIAM(callback) {
 // ---------------------------------------------------------------------------
 // loadIsHRFromJDE(callback)
 //
-// Chains: IAM (email) → JDE GetEmployeeInfoByEmail → window.IsHR + window.UserFileNo.
+// Chains: IAM (email) → JDE GetEmployeeInfoByEmail → window.IsHR + window.EmpDepartmentCode.
 // Reuses the IAM cache populated by loadCurrentUserFromIAM, so calling both
 // at startup costs only one IAM round-trip.
 //
 // Globals set:
-//   window.IsHR        = boolean   (from emp.IsHR)
-//   window.UserFileNo  = integer   (from emp.FileNo; 0 when employee not found)
+//   window.IsHR                  = boolean (from emp.IsHR)
+//   window.EmpDepartmentCode     = string  (from emp.DepartmentCode;        "" when employee not found)
+//   window.EmpDepartmentDesc     = string  (from emp.DepartmentDescription; "" when employee not found)
+// The description is stored separately so Form.io selects can pre-populate
+// their label/template via instance.selectData without waiting for the URL
+// data source to finish loading.
 //
 // Auth header is the base64 of "JDEORCH:ucjde123" — regenerate via:
 //   [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("JDEORCH:ucjde123"))
 // if you rotate the password.
 // ---------------------------------------------------------------------------
 function loadIsHRFromJDE(callback) {
-    // Cache: once per page, every later caller reuses the same IsHR / FileNo.
+    // Cache: once per page, every later caller reuses the same IsHR / DepartmentCode.
     if (typeof window.IsHR !== 'undefined') {
         if (typeof callback === 'function') callback(window.IsHR);
         return;
@@ -117,8 +121,8 @@ function loadIsHRFromJDE(callback) {
             },
             data: JSON.stringify({ Email: email }),
             success: function (emp) {
-                window.IsHR       = !!(emp && emp.IsHR);
-                window.UserFileNo = (emp && typeof emp.FileNo === 'number') ? emp.FileNo : 0;
+                window.IsHR              = !!(emp && emp.IsHR);
+                window.EmpDepartmentCode = (emp && emp.DepartmentCode) || '';
                 if (typeof callback === 'function') callback(window.IsHR);
             },
             error: function (xhr, status, error) {
