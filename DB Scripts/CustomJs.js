@@ -122,8 +122,7 @@ function loadIsHRFromJDE(callback) {
             data: JSON.stringify({ Email: email }),
             success: function (emp) {
                 window.IsHR              = !!(emp && emp.IsHR);
-                window.EmpDepartmentCode = (emp && emp.DepartmentCode)        || '';
-                window.EmpDepartmentDesc = (emp && emp.DepartmentDescription) || '';
+                window.EmpDepartmentCode = (emp && emp.DepartmentCode)        || '';                
                 if (typeof callback === 'function') callback(window.IsHR);
             },
             error: function (xhr, status, error) {
