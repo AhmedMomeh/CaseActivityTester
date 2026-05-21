@@ -119,6 +119,24 @@ namespace ActivityTester
     {
         private static int Main(string[] args)
         {
+            // ----------------------------------------------------------------
+            // Run-mode switch.
+            //   ActivityTester.exe              → original activity-testing mode (below)
+            //   ActivityTester.exe mock-api     → starts the mock JDE Orchestrator HTTP server
+            // The mock-api branch never touches the activity setup (no DB conn,
+            // no Portal config) so it's safe to run on machines that don't have
+            // the Portal data layer reachable.
+            // ----------------------------------------------------------------
+            if (args.Length > 0 &&
+                (args[0].Equals("mock-api",   System.StringComparison.OrdinalIgnoreCase) ||
+                 args[0].Equals("--mock-api", System.StringComparison.OrdinalIgnoreCase) ||
+                 args[0].Equals("jde-mock",   System.StringComparison.OrdinalIgnoreCase)))
+            {
+                var rest = new string[args.Length - 1];
+                System.Array.Copy(args, 1, rest, 0, rest.Length);
+                return ActivityTester.JdeMock.JdeMockServer.Run(rest);
+            }
+
             // Work from the app's own directory so the data layer finds the bundled
             // appsettings.json + license + native deps. If the bin folder doesn't
             // have an appsettings.json (older build) fall back to the Portal dir
@@ -420,7 +438,7 @@ namespace ActivityTester
             //ActivityTemplate activity = new IPO_IssuanceOfPurchaseOrder_RouteByAmountActivity();
             //ActivityTemplate activity = new StampApprovedDocumentsActivity();
             //ActivityTemplate activity = new BuildApprovalHistoryActivity();
-            //  ActivityTemplate activity = new BuildApprovalHistoryActivity();
+           //  ActivityTemplate activity = new BuildApprovalHistoryActivity();
 
             SendCaseDocumentsEmailActivity activity = new SendCaseDocumentsEmailActivity();
 
@@ -428,7 +446,7 @@ namespace ActivityTester
             var props = new PropertyCollection
             {
                 // For BuildApprovalHistoryActivity:
-                new Property { Name = "DocumentId",       Value = "89" },
+                new Property { Name = "DocumentId",       Value = "889" },
                 new Property { Name = "approvalHistory",  Value = "89" },
 
                 // For StampApprovedDocumentsActivity:
