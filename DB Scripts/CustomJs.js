@@ -3,8 +3,18 @@ let url = document.URL.toLowerCase();
 let CustomCaseApiUrl = "https://caseservicedev.unioncoop.ae";
 let caseportalURL = "http://localhost:33333";
 let IAMURL = "http://localhost:11111";
+let JDEURL = "https://localhost:7042/jderest/orchestrator";
 
 $(document).ready(function () {
+
+    // Preload the currently-logged-in user's profile from IAM so it's
+    // available (window.CurrentUserInfo / window.CurrentUserEmail) by the
+    // time forms render and need it.
+    loadCurrentUserFromIAM();
+
+    // Resolve email → JDE employee record → window.IsHR. Reuses the IAM
+    // email above via its internal cache, so only one IAM round-trip total.
+    loadIsHRFromJDE();
 
     // loadTaskhistory in Application metadata
     $(document).ajaxSuccess(function (event, xhr, settings) {
@@ -23,6 +33,95 @@ $(document).ready(function () {
 
 
 });
+
+// ---------------------------------------------------------------------------
+// loadCurrentUserFromIAM(callback)
+//
+// Hits IAM to load only the email of the currently-logged-in user, then
+// caches it on window.CurrentUserEmail so later code paths (e.g. JDE
+// GetEmployeeInfoByEmail) don't have to refetch.
+// Pass an optional callback(email) to chain follow-up calls.
+// ---------------------------------------------------------------------------
+function loadCurrentUserFromIAM(callback) {
+    // Cache: once per page, every later caller reuses the same email.
+    if (window.CurrentUserEmail) {
+        if (typeof callback === 'function') callback(window.CurrentUserEmail);
+        return;
+    }
+
+    var userId = $('#hdUserId').val();
+    var token  = window.IdentityAccessToken;
+
+    if (!userId) {
+        console.warn('loadCurrentUserFromIAM: #hdUserId is empty — not in a Portal-authenticated page yet');
+        return;
+    }
+    if (!token) {
+        console.error('loadCurrentUserFromIAM: window.IdentityAccessToken is missing');
+        return;
+    }
+
+    $.ajax({
+        url: `${IAMURL}/Api/GetUser?id=${userId}`,
+        method: 'GET',
+        headers: {
+            'Accept'        : 'application/json',
+            'Authorization' : `Bearer ${token}`
+        },
+        success: function (userData) {
+            var email = (userData && (userData.email || userData.Email || userData.userEmail)) || '';
+            window.CurrentUserEmail = email;
+            if (typeof callback === 'function') callback(email);
+        },
+        error: function (xhr, status, error) {
+            console.error('IAM GetUser failed:', status, error, xhr.responseText);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// loadIsHRFromJDE(callback)
+//
+// Chains: IAM (email) → JDE GetEmployeeInfoByEmail (IsHR) → window.IsHR.
+// Reuses the IAM cache populated by loadCurrentUserFromIAM, so calling both
+// at startup costs only one IAM round-trip.
+
+// Auth header is the base64 of "JDEORCH:ucjde123" — regenerate via:
+//   [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("JDEORCH:ucjde123"))
+// if you rotate the password.
+// ---------------------------------------------------------------------------
+function loadIsHRFromJDE(callback) {
+    // Cache: once per page, every later caller reuses the same IsHR.
+    if (typeof window.IsHR !== 'undefined') {
+        if (typeof callback === 'function') callback(window.IsHR);
+        return;
+    }
+
+    loadCurrentUserFromIAM(function (email) {
+        if (!email) {
+            console.warn('loadIsHRFromJDE: no email from IAM — skipping JDE lookup');
+            return;
+        }
+
+        $.ajax({
+            url: `${JDEURL}/GetEmployeeInfoByEmail`,
+            method: 'POST',
+            contentType: 'application/json',
+            headers: {
+                'Accept'        : 'application/json',
+                'Authorization' : 'Basic SkRFT1JDSDp1Y2pkZTEyMw=='   // JDEORCH:ucjde123
+            },
+            data: JSON.stringify({ Email: email }),
+            success: function (emp) {
+                window.IsHR = !!(emp && emp.IsHR);
+                if (typeof callback === 'function') callback(window.IsHR);
+            },
+            error: function (xhr, status, error) {
+                console.error('JDE GetEmployeeInfoByEmail failed:', status, error, xhr.responseText);
+            }
+        });
+    });
+}
 
 
 function loadTaskhistory() {
