@@ -5,6 +5,10 @@ let caseportalURL = "http://localhost:33333";
 let IAMURL = "http://localhost:11111";
 let JDEURL = "https://localhost:7042/jderest/orchestrator";
 
+// Expose these  on `window` so Form.io form JSON (JDEURL) can reference them as window.JDEURL 
+window.JDEURL = JDEURL;
+window.JDEAuthHeader = "Basic SkRFT1JDSDp1Y2pkZTEyMw==";   // JDEORCH:ucjde123
+
 $(document).ready(function () {
 
     // Preload the currently-logged-in user's profile from IAM so it's
