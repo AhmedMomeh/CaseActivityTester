@@ -66,23 +66,35 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Copy the entire lib\ tree to the output folder so RID-specific managed DLLs
-       (Microsoft.Data.SqlClient) and native deps (SkiaSharp, SqlClient SNI) end
-       up alongside the executable.  The PortalResolver in Program.cs probes this
-       same layout at runtime, so identical paths work in dev and at deploy time. -->
+  <!-- Two-part display vs. output decoupling for the bundled libs:
+       - <Link>     controls where Solution Explorer shows the file (we want
+                    them grouped under the lib\ virtual folder, not scattered
+                    at the project root).
+       - <TargetPath> controls where MSBuild copies the file in the OUTPUT
+                    directory (we want them flat next to ActivityTester.exe,
+                    or under runtimes\ for the native-deps tree, because that's
+                    where the PortalResolver in Program.cs probes them).
+       Setting both keeps Solution Explorer clean AND the runtime layout
+       correct.
+
+       Copy the runtimes\ tree to the output folder so RID-specific managed
+       DLLs (Microsoft.Data.SqlClient) and native deps (SkiaSharp, SqlClient
+       SNI) end up at the standard runtime paths the loader probes. -->
   <ItemGroup>
     <None Include="lib\runtimes\**\*.*">
-      <Link>runtimes\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <Link>lib\runtimes\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <TargetPath>runtimes\%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 
-  <!-- appsettings.json — bundled locally so the activity harness works without the
-       Portal install.  Override values from inside Program.cs (DbConnectionString,
-       StorageServerUrl, etc.) if your target machine uses different endpoints. -->
+  <!-- appsettings.json — bundled locally so the activity harness works without
+       the Portal install. Shown in Solution Explorer under lib\, copied flat
+       to bin\ where the data layer expects it. -->
   <ItemGroup>
     <None Include="lib\appsettings.json" Condition="Exists('lib\appsettings.json')">
-      <Link>appsettings.json</Link>
+      <Link>lib\appsettings.json</Link>
+      <TargetPath>appsettings.json</TargetPath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
@@ -97,7 +109,10 @@
        handled by explicit <Reference> entries above, which copy themselves via
        <Private>true</Private>). The .NET runtime only loads what's actually
        referenced at runtime, so extras sit harmlessly on disk. This keeps us out
-       of the whack-a-mole loop where each deploy surfaces another missing DLL. -->
+       of the whack-a-mole loop where each deploy surfaces another missing DLL.
+
+       Display: shown in Solution Explorer under lib\ (via <Link>).
+       Output : copied flat to bin\         (via <TargetPath>). -->
   <ItemGroup>
     <None Include="lib\*.dll"
           Exclude="lib\Intalio.Case.Core.dll;
@@ -107,7 +122,8 @@
                    lib\Aspose.PDF.dll;
                    lib\Aspose.Words.dll;
                    lib\SkiaSharp.dll">
-      <Link>%(Filename)%(Extension)</Link>
+      <Link>lib\%(Filename)%(Extension)</Link>
+      <TargetPath>%(Filename)%(Extension)</TargetPath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
