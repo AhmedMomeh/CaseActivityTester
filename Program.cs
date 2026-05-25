@@ -438,12 +438,12 @@ namespace ActivityTester
             //ActivityTemplate activity = new IPO_IssuanceOfPurchaseOrder_RouteByAmountActivity();
             //ActivityTemplate activity = new StampApprovedDocumentsActivity();
             //ActivityTemplate activity = new BuildApprovalHistoryActivity();
-            //  ActivityTemplate activity = new BuildApprovalHistoryActivity();
+            //ActivityTemplate activity = new BuildApprovalHistoryActivity();
+            //SendCaseDocumentsEmailActivity activity = new SendCaseDocumentsEmailActivity();
+            // RouteToCreatorStructureManagerActivity activity = new RouteToCreatorStructureManagerActivity();
 
-            //  SendCaseDocumentsEmailActivity activity = new SendCaseDocumentsEmailActivity();
+            RouteToCreatorLineManagerActivity activity = new RouteToCreatorLineManagerActivity();
 
-            RouteToCreatorStructureManagerActivity activity = new RouteToCreatorStructureManagerActivity();
-            
 
             var props = new PropertyCollection
             {
