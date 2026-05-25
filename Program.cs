@@ -438,15 +438,17 @@ namespace ActivityTester
             //ActivityTemplate activity = new IPO_IssuanceOfPurchaseOrder_RouteByAmountActivity();
             //ActivityTemplate activity = new StampApprovedDocumentsActivity();
             //ActivityTemplate activity = new BuildApprovalHistoryActivity();
-           //  ActivityTemplate activity = new BuildApprovalHistoryActivity();
+            //  ActivityTemplate activity = new BuildApprovalHistoryActivity();
 
-            SendCaseDocumentsEmailActivity activity = new SendCaseDocumentsEmailActivity();
+            //  SendCaseDocumentsEmailActivity activity = new SendCaseDocumentsEmailActivity();
 
+            RouteToCreatorStructureManagerActivity activity = new RouteToCreatorStructureManagerActivity();
+            
 
             var props = new PropertyCollection
             {
                 // For BuildApprovalHistoryActivity:
-                new Property { Name = "DocumentId",       Value = "889" },
+                new Property { Name = "DocumentId",       Value = "109" },
                 new Property { Name = "approvalHistory",  Value = "89" },
 
                 // For StampApprovedDocumentsActivity:
