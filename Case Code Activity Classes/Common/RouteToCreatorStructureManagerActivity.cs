@@ -39,7 +39,7 @@ namespace Shared.Activities
     /// Outputs (workflow item properties set by this activity):
     ///   creatorUserId        — the user who opened the case
     ///   creatorStructureId   — that user's structure id
-    ///   nextApprovalUserId   — manager of that structure (this is the routing key)
+    ///   nextDepartmentManagerApprovalUserId   — manager of that structure (this is the routing key)
     /// </summary>
     public class RouteToCreatorStructureManagerActivity : ActivityTemplate
     {
@@ -75,9 +75,9 @@ namespace Shared.Activities
         private static string AuthClientSecret => Cfg("CaseActivities:CaseAuth:ClientSecret", "");
 
         // -------- Workflow property keys --------
-        // Change OutNextApprovalUserId to match whatever property the next Task
+        // Change OutNextDepartmentManagerApprovalUserId to match whatever property the next Task
         // step reads (common alternatives: "assigneeUserId", "nextApproverUserId").
-        private const string OutNextApprovalUserId  = "nextApprovalUserId";
+        private const string OutNextDepartmentManagerApprovalUserId = "nextDepartmentManagerApprovalUserId";
         private const string OutCreatorUserId       = "creatorUserId";
         private const string OutCreatorStructureId  = "creatorStructureId";
 
@@ -139,9 +139,9 @@ namespace Shared.Activities
                 // 3) Write the routing properties for the next workflow step.
                 SetProp(workflowItem, OutCreatorUserId,      creatorId.ToString());
                 SetProp(workflowItem, OutCreatorStructureId, resolved.structureId.Value.ToString());
-                SetProp(workflowItem, OutNextApprovalUserId, resolved.managerId.Value.ToString());
+                SetProp(workflowItem, OutNextDepartmentManagerApprovalUserId, resolved.managerId.Value.ToString());
 
-                LogInfo($"---- END  DocumentId={documentId}  nextApprovalUserId={resolved.managerId.Value}  result=success ----");
+                LogInfo($"---- END  DocumentId={documentId}  nextDepartmentManagerApprovalUserId={resolved.managerId.Value}  result=success ----");
             }
             catch (Exception ex)
             {
