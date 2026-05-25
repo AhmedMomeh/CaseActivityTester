@@ -9,7 +9,7 @@ namespace Shared.Activities
     public class IPO_IssuanceOfPurchaseOrder_RouteByAmountActivity : ActivityTemplate
     {
         // Based on the IPO template:
-        //   Purchase Order path AND amount > 25,000 -> route to CEO
+        //   Purchase Order path AND amount >= 25,000 -> route to CEO
         //   Otherwise                               -> go directly 
         private const decimal CEO_AMOUNT = 25000;
 
@@ -20,7 +20,7 @@ namespace Shared.Activities
 
             string nextApprovalRoute;
             if (string.Equals(purchaseType, "PurchaseOrder", StringComparison.OrdinalIgnoreCase)
-                && amount > CEO_AMOUNT)
+                && amount >= CEO_AMOUNT)
             {
                 nextApprovalRoute = "NeedCEO";
             }

@@ -149,6 +149,7 @@ namespace ActivityTester.JdeMock
             Console.WriteLine("    POST  " + baseUrl + "GetDepartmentList");
             Console.WriteLine("    POST  " + baseUrl + "GetEmployeeInfoByEmail");
             Console.WriteLine("    POST  " + baseUrl + "GetJobsList");
+            Console.WriteLine("    POST  " + baseUrl + "GetNationalitiesList");
             Console.WriteLine();
             Console.WriteLine("  Press Ctrl+C to stop.");
             Console.WriteLine("===========================================================");

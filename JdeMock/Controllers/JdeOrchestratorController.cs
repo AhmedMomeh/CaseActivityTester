@@ -104,5 +104,28 @@ namespace ActivityTester.JdeMock.Controllers
                 list.Count, resp.ServerExecutionSeconds);
             return Ok(resp);
         }
+
+        // -------------------------------------------------------------------
+        // POST /jderest/orchestrator/GetNationalitiesList
+        //   Request:  {}                 (no filters in production JDE today)
+        //   Response: { "NationalitiesList": [...], "jde__status":"SUCCESS", ... }
+        // -------------------------------------------------------------------
+        [HttpPost("GetNationalitiesList")]
+        public ActionResult<GetNationalitiesListResponse> GetNationalitiesList(
+            [FromBody] GetNationalitiesListRequest request)
+        {
+            var start = JdeTime.NowUae();
+            _log.LogInformation("GetNationalitiesList received");
+
+            var list = _data.GetNationalities();
+
+            var resp = new GetNationalitiesListResponse { NationalitiesList = list };
+            resp.SetTimings(start, JdeTime.NowUae());
+
+            _log.LogInformation(
+                "GetNationalitiesList returned  {Count} nationality(ies)  in {Seconds:N3}s",
+                list.Count, resp.ServerExecutionSeconds);
+            return Ok(resp);
+        }
     }
 }
