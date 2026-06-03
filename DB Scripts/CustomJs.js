@@ -5,9 +5,127 @@ let caseportalURL = "http://localhost:33333";
 let IAMURL = "http://localhost:11111";
 let JDEURL = "https://localhost:7042/jderest/orchestrator";
 
-// Expose these  on `window` so Form.io form JSON (JDEURL) can reference them as window.JDEURL 
+// Expose these  on `window` so Form.io form JSON (JDEURL) can reference them as window.JDEURL
 window.JDEURL = JDEURL;
 window.JDEAuthHeader = "Basic SkRFT1JDSDp1Y2pkZTEyMw==";   // JDEORCH:ucjde123
+
+// ---------------------------------------------------------------------------
+// JDE Loader — shows a spinner overlay during any HTTP call to JDE so slow
+// responses don't leave dropdowns looking broken.
+//
+// Catches every transport the Portal uses:
+//   1. XMLHttpRequest        — Form.io URL dataSrc
+//   2. window.fetch          — newer Form.io builds
+//   3. jQuery $.ajax         — loadIsHRFromJDE etc. in this file
+//   4. Formio.makeRequest    — internal Form.io HTTP client
+//
+// Display: Portal's Common.mask if loaded, otherwise a self-contained CSS
+// overlay. Ref-counted so concurrent calls only show the overlay once.
+// URL-matched on "/jderest/orchestrator" so other traffic is unaffected.
+// ---------------------------------------------------------------------------
+(function attachJdeLoader() {
+    if (window.__jdeLoaderInstalled) return;
+    window.__jdeLoaderInstalled = true;
+
+    var inFlight = 0;
+    var maskName = "jde-loading-mask";
+
+    // Path-match instead of prefix-match: covers proxied URLs, template
+    // substitution edge-cases, and trailing-slash differences. Anything with
+    // "/jderest/orchestrator" in it is a JDE call.
+    function isJdeUrl(u) {
+        return typeof u === 'string' && u.indexOf('/jderest/orchestrator') >= 0;
+    }
+
+    // ----- Self-contained CSS overlay (used when Common.mask isn't loaded) ---
+    function showFallback() {
+        if (!document.getElementById('jde-loader-css')) {
+            var s = document.createElement('style');
+            s.id = 'jde-loader-css';
+            s.textContent =
+                '#jde-loader-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2147483647;display:flex;align-items:center;justify-content:center;}' +
+                '#jde-loader-overlay .jde-spinner{width:54px;height:54px;border:6px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:jde-spin .9s linear infinite;}' +
+                '@keyframes jde-spin{to{transform:rotate(360deg)}}';
+            (document.head || document.documentElement).appendChild(s);
+        }
+        if (document.getElementById('jde-loader-overlay')) return;
+        var ov = document.createElement('div');
+        ov.id = 'jde-loader-overlay';
+        ov.innerHTML = '<div class="jde-spinner"></div>';
+        document.body.appendChild(ov);
+    }
+    function hideFallback() {
+        var ov = document.getElementById('jde-loader-overlay');
+        if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+    }
+
+    function showLoader() {
+        if (inFlight++ > 0) return;
+        if (typeof Common !== 'undefined' && Common.mask) {
+            try { Common.mask(document.body, maskName); return; } catch (e) {}
+        }
+        showFallback();
+    }
+    function hideLoader() {
+        if (--inFlight > 0) return;
+        inFlight = 0;
+        if (typeof Common !== 'undefined' && Common.unmask) {
+            try { Common.unmask(maskName); } catch (e) {}
+        }
+        hideFallback();
+    }
+
+    // 1) XMLHttpRequest — primary transport for Form.io URL dataSrc.
+    //    loadend fires for success / error / abort / timeout, so it's the
+    //    only event we need.
+    var XO = XMLHttpRequest.prototype.open;
+    var XS = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url) {
+        this.__jdeMatched = isJdeUrl(url);
+        return XO.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function () {
+        if (this.__jdeMatched) {
+            showLoader();
+            this.addEventListener('loadend', hideLoader);
+        }
+        return XS.apply(this, arguments);
+    };
+
+    // 2) fetch.
+    if (typeof window.fetch === 'function') {
+        var origFetch = window.fetch;
+        window.fetch = function (input) {
+            var u = (typeof input === 'string') ? input : (input && input.url);
+            if (!isJdeUrl(u)) return origFetch.apply(this, arguments);
+            showLoader();
+            return Promise.resolve(origFetch.apply(this, arguments)).finally(hideLoader);
+        };
+    }
+
+    // 3) jQuery $.ajax — safety net for calls made through jQuery in this
+    //    file. Pairs with the XHR patch (+2/-2 → still nets to zero).
+    if (window.jQuery) {
+        $(document).ajaxSend(function (e, x, s)     { if (isJdeUrl(s && s.url)) showLoader(); });
+        $(document).ajaxComplete(function (e, x, s) { if (isJdeUrl(s && s.url)) hideLoader(); });
+    }
+
+    // 4) Formio.makeRequest — Formio may load after this script, so poll.
+    var tries = 0;
+    (function patchFormio() {
+        if (typeof Formio !== 'undefined' && Formio.makeRequest && !Formio.__jdeLoaderPatched) {
+            var origMR = Formio.makeRequest;
+            Formio.makeRequest = function (formio, type, url) {
+                if (!isJdeUrl(url)) return origMR.apply(this, arguments);
+                showLoader();
+                return Promise.resolve(origMR.apply(this, arguments)).finally(hideLoader);
+            };
+            Formio.__jdeLoaderPatched = true;
+            return;
+        }
+        if (tries++ < 100) setTimeout(patchFormio, 100);
+    })();
+})();
 
 $(document).ready(function () {
 
@@ -27,7 +145,6 @@ $(document).ready(function () {
         }
 
         if (settings.url.includes("File/ListByDocumentId")) {
-            debugger;
             window.addEventListener('contextmenu', (event) => {
                 $('li:contains("Replace")').hide();
             });
@@ -138,7 +255,6 @@ function loadIsHRFromJDE(callback) {
 
 
 function loadTaskhistory() {
-    debugger;
     const taskId = $('#hdId').val();
     const documentId = $('#hdDocumentId').val();
     const documentTasksUrl = `${caseportalURL}/Document/GetDocumentTasks?taskId=${taskId}&documentId=${documentId}&fromSearch=false`;
@@ -164,7 +280,6 @@ function loadTaskhistory() {
                 }
 
                 tasksContainer.empty();
-                debugger;
 
                 // Create an array of promises for fetching user data
                 const promises = taskData.map((task, index) => {
@@ -331,76 +446,20 @@ function createComponentElement(component, translatedLabel, formData) {
 
 
 
-//$(document).ready(function () {
-
-//    debugger;
-//    $(document).ajaxSuccess(function (event, xhr, settings) {
-
-
-//        const heading = document.querySelector("#documentContainerDiv .content-heading");
-
-//        if (
-//            heading &&
-//            (
-//                settings.url.includes("Document/Save") || settings.url.includes("Document/SaveAndSend")
-//            ) &&
-//            (
-//                heading.innerText.includes("Payment Report - Stock Agent") ||
-//                heading.innerText.includes("PRICE INCREASE AND DECREASE") ||
-//                heading.innerText.includes("NEW ITEMS (Import and Private Label)")
-//            )
-//           ) {
-//            debugger;
-
-//            Common.mask(document.body, "body-mask");
-
-//            setTimeout(function () {
-//                ReplaceOriginalFile();
-//            }, 5000);
-
-//        }
-
-//    });
-
-//});
-
-
 function loadData() {
-
-    //to set value
-    //$('input[name="data[remedyRequest]"]').val('test')
+    // Wires the basedOnContract checkbox change → ReplaceOriginalFile.
+    // (Called from form-side custom JS, not from this file.)
     $('input[name="data[basedOnContract]"]').change(function () {
-        // Check if the checkbox is checked    
-        var isChecked = $(this).is(':checked'); var value = $(this).val();
-        // Prepare data to send 
-        var requestData = {
-            basedOnContract: isChecked ? value : null
-            // Send the value if checked, null if unchecked      
-        };
-        //// Call the API using AJAX
-        //$.ajax({
-        //    url: 'https://api.example.com/data',
-        //    // Replace with your API URL
-        //    method: 'GET', // or 'POST' depending on your API
-        //    data: requestData, // Sending the data
-        //    success: function (response) {
-        //        // Handle the successful response
-        //        $('#result').html(JSON.stringify(response));
-        //    }, error: function (xhr, status, error) {
-        //        // Handle errors
-        //        console.error('Error:', error); $('#result').html('An error occurred. Please try again.');
-        //    }
-        //});
-
+        var isChecked = $(this).is(':checked');
+        var value     = $(this).val();
+        var requestData = { basedOnContract: isChecked ? value : null };
         console.log(requestData);
-
         ReplaceOriginalFile();
     });
 }
 
 
 function ReplaceOriginalFile() {
-    debugger;
     // this from draft
     documentId = $('#hdDocumentId').val();
     if (typeof documentId === 'undefined' || documentId === null || documentId === '') {
