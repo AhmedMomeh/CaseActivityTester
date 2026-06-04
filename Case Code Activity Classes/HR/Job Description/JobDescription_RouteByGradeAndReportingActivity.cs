@@ -79,7 +79,15 @@ namespace Shared.Activities
         //      supersedes the CHRO review.
         //        -> nextApprovalRoute = "CEODirect"
         //
-        //   2. <b>Grade A, B, C, or D (senior roles)</b> � JDs at these grades
+        //   2. <b>Grade A, B, C, or D (senior roles)</b> � JDs at these grades     // A, B, C,d  chro final if mark ceo will go to ceo aftr chro
+
+
+        //if e f g h d  it will not go to chro  add new step hrd directoory or assoc dir  then dms
+
+
+
+
+
         //      require both CHRO endorsement and CEO sign-off. CHRO reviews HR
         //      consistency (job family, banding, compensation alignment); CEO
         //      provides final approval.
@@ -130,7 +138,7 @@ namespace Shared.Activities
                 }
                 else if (IsSenior(grade))
                 {
-                    // Grade A-D � CHRO then CEO.
+                    // Grade A-D �no need ceo 
                     nextApprovalRoute = "CHROAndCEO";
                 }
                 else
