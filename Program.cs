@@ -449,7 +449,7 @@ namespace ActivityTester
             var props = new PropertyCollection
             {
                 // For BuildApprovalHistoryActivity:
-                new Property { Name = "DocumentId",       Value = "137" },
+                new Property { Name = "DocumentId",       Value = "140" },
                 new Property { Name = "approvalHistory",  Value = "89" },
 
                 // For StampApprovedDocumentsActivity:

@@ -150,6 +150,25 @@ $(document).ready(function () {
             });
         }
 
+        // Initiation Forms never call these endpoints — the Portal hits them
+        // only when opening an EXISTING document/task page or the Application
+        // Metadata view. So if either URL fires we know we're NOT in the
+        // initiation case, and step-specific panels can be shown.
+        if (settings.url.includes("Document/GetDocumentByTaskId") ||
+            settings.url.includes("Document/GetDocumentTasks")) {
+            window.IsExistingCaseView = true;
+
+            // Push the flag into the form so any panel keyed to
+            // data.IsExistingCaseView re-evaluates its customConditional.
+            if (typeof Formio !== 'undefined' && Formio.forms) {
+                Object.values(Formio.forms).forEach(function (f) {
+                    if (typeof f.getComponent !== 'function') return;
+                    var fld = f.getComponent('IsExistingCaseView');
+                    if (fld) fld.setValue(true);
+                });
+            }
+        }
+
     });
 
 

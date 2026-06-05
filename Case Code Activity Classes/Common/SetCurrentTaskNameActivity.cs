@@ -25,6 +25,20 @@ namespace Shared.Activities
 
         private const string OutCurrentTaskName = "CurrentTaskName";
 
+        // -------- Retry tuning --------
+        // The workflow engine sometimes hasn't committed the new Task row by
+        // the time this activity fires (typical between a Form Activity's
+        // SaveAndSendWithRowVersion and the next step's task creation). We
+        // poll: query → sleep → query → sleep → … up to MaxRetries times.
+        //
+        //   MaxRetries = 6   ┐
+        //   DelayMs    = 500 ┘ → total worst-case wait ≈ 3 seconds (6 × 500ms)
+        //
+        // Bump MaxRetries higher if your DB / workflow engine is slower; lower
+        // if you want the activity to fail-fast on initiation (no task yet).
+        private const int MaxRetries = 10;
+        private const int DelayMs    = 300;
+
         private static readonly object LogLock = new object();
 
         public override void Complete(WorkflowItem workflowItem) { }
@@ -42,22 +56,39 @@ namespace Shared.Activities
 
             try
             {
-                string taskName = LookupCurrentTaskName(documentId);
+                string taskName = "";
+                int    attempt  = 0;
+
+                // Poll: query → sleep → query → sleep → … until we get a name
+                // or exhaust MaxRetries. Same total budget (~3s) for both the
+                // "task already committed" and "engine still committing" cases —
+                // the loop exits early as soon as the lookup returns a value.
+                for (attempt = 1; attempt <= MaxRetries; attempt++)
+                {
+                    taskName = LookupCurrentTaskName(documentId);
+                    if (!string.IsNullOrWhiteSpace(taskName)) break;
+
+                    if (attempt < MaxRetries)
+                    {
+                        LogInfo($"Attempt {attempt}/{MaxRetries}: no task yet — waiting {DelayMs}ms before retry.");
+                        Thread.Sleep(DelayMs);
+                    }
+                }
+
                 if (string.IsNullOrWhiteSpace(taskName))
                 {
-                    // Expected at the very start of a document's lifecycle —
-                    // the workflow engine hasn't created the first Task row
-                    // yet. Treat as "initiation mode": clear the property so
-                    // forms reading data.CurrentTaskName see empty and hide
-                    // step-specific panels.
+                    // After all retries still nothing — genuinely the very
+                    // start of a document's lifecycle (initiation mode).
+                    // Leave CurrentTaskName empty so forms reading
+                    // data.CurrentTaskName hide step-specific panels.
                     SetProp(workflowItem, OutCurrentTaskName, "");
-                    LogInfo($"No task row yet for DocumentId={documentId} — CurrentTaskName left empty (initiation mode).");
+                    LogInfo($"No task row after {MaxRetries} attempts (~{MaxRetries * DelayMs}ms) for DocumentId={documentId} — CurrentTaskName left empty (initiation mode).");
                     LogInfo($"---- END  DocumentId={documentId}  result=success (empty) ----");
                     return;
                 }
 
                 SetProp(workflowItem, OutCurrentTaskName, taskName);
-                LogInfo($"CurrentTaskName = '{taskName}'");
+                LogInfo($"CurrentTaskName = '{taskName}'  (found on attempt {attempt}/{MaxRetries})");
                 LogInfo($"---- END  DocumentId={documentId}  result=success ----");
             }
             catch (Exception ex)
@@ -70,50 +101,77 @@ namespace Shared.Activities
         
         private string LookupCurrentTaskName(long documentId)
         {
-            // Two-pass lookup so we don't fight the workflow engine's timing:
-            //   1. The currently OPEN task (ClosedDate IS NULL). This is the
-            //      truth — it's the task the user is about to / currently
-            //      working on. Works for every step EXCEPT the very first one
-            //      (no row yet) and the very last one (no open row left).
-            //   2. Fallback to the most-recently-created task in either state.
-            //      Catches the "between Task1 close and Task2 create" window
-            //      that the workflow engine briefly sits in.
-            // Either pass returning empty means "really no task" (e.g. before
-            // initiation) — caller treats that as initiation mode.
+            // WITH (NOLOCK) on every table reads UNCOMMITTED rows — required
+            // because the Intalio workflow engine creates the new Task row
+            // inside its own transaction and holds that transaction open
+            // until ALL pre/post activities finish (including this one).
+            // Default READ COMMITTED isolation can't see those in-flight rows
+            // at all; NOLOCK bypasses the lock and reads from the buffer pool.
+            //
+            // Trade-off: we may briefly see a row that ends up being rolled
+            // back if the workflow step aborts. For "what's the current task
+            // name" that's harmless — at worst we'd have set a property that
+            // never had its task survive, and the next activity would
+            // overwrite it.
+            //
+            // Two-pass lookup:
+            //   1. OPEN task (ClosedDate IS NULL) — the task the user is
+            //      about to / currently working on.
+            //   2. Most-recently-created task — fallback while the engine is
+            //      between closing one task and creating the next.
             const string sqlOpen =
                 "SELECT TOP 1 COALESCE(ad.Name, NULLIF(LTRIM(RTRIM(ad.Title)), '')) " +
-                "FROM   dbo.[Task]               t " +
-                "INNER  JOIN dbo.ActivityInstances  ai ON ai.ActivityInstanceId = t.ActivityInstanceId " +
-                "INNER  JOIN dbo.ActivityDefinition ad ON ad.ActivityId         = ai.ActivityDefinitionId " +
+                "FROM   dbo.[Task]               t  WITH (NOLOCK) " +
+                "INNER  JOIN dbo.ActivityInstances  ai WITH (NOLOCK) ON ai.ActivityInstanceId = t.ActivityInstanceId " +
+                "INNER  JOIN dbo.ActivityDefinition ad WITH (NOLOCK) ON ad.ActivityId         = ai.ActivityDefinitionId " +
                 "WHERE  t.DocumentId = @docId AND t.ClosedDate IS NULL " +
                 "ORDER  BY t.CreatedDate DESC";
 
             const string sqlAny =
                 "SELECT TOP 1 COALESCE(ad.Name, NULLIF(LTRIM(RTRIM(ad.Title)), '')) " +
-                "FROM   dbo.[Task]               t " +
-                "INNER  JOIN dbo.ActivityInstances  ai ON ai.ActivityInstanceId = t.ActivityInstanceId " +
-                "INNER  JOIN dbo.ActivityDefinition ad ON ad.ActivityId         = ai.ActivityDefinitionId " +
+                "FROM   dbo.[Task]               t  WITH (NOLOCK) " +
+                "INNER  JOIN dbo.ActivityInstances  ai WITH (NOLOCK) ON ai.ActivityInstanceId = t.ActivityInstanceId " +
+                "INNER  JOIN dbo.ActivityDefinition ad WITH (NOLOCK) ON ad.ActivityId         = ai.ActivityDefinitionId " +
                 "WHERE  t.DocumentId = @docId " +
                 "ORDER  BY t.CreatedDate DESC";
+
+            // Diagnostic — counts ALL Task rows for this DocumentId, ignoring
+            // joins. If this returns 0 the workflow engine truly hasn't
+            // created the row yet (no amount of retrying will help — the
+            // engine is waiting for us to finish). If it returns N>0 but the
+            // join queries above return empty, the issue is on the join
+            // (orphan ActivityInstanceId, etc.) rather than visibility.
+            const string sqlCount = "SELECT COUNT(1) FROM dbo.[Task] WITH (NOLOCK) WHERE DocumentId = @docId";
 
             using (var conn = new SqlConnection(Intalio.Case.Core.Configuration.DbConnectionString))
             {
                 conn.Open();
 
+                int rowCount = 0;
+                using (var cmd = new SqlCommand(sqlCount, conn))
+                {
+                    cmd.Parameters.AddWithValue("@docId", documentId);
+                    rowCount = Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
+                }
+
                 string result = ExecuteScalarString(conn, sqlOpen, documentId);
                 if (!string.IsNullOrWhiteSpace(result))
                 {
-                    LogInfo("Matched OPEN task (ClosedDate IS NULL).");
+                    LogInfo($"Matched OPEN task (ClosedDate IS NULL). [Task rows seen for this doc: {rowCount}]");
                     return result;
                 }
 
                 result = ExecuteScalarString(conn, sqlAny, documentId);
                 if (!string.IsNullOrWhiteSpace(result))
                 {
-                    LogInfo("No open task — falling back to most-recently-created.");
+                    LogInfo($"No open task — fell back to most-recently-created. [Task rows seen for this doc: {rowCount}]");
                     return result;
                 }
 
+                LogInfo($"Lookup empty.  dbo.[Task] WITH (NOLOCK) row count for DocumentId={documentId} = {rowCount}.  " +
+                        (rowCount == 0
+                            ? "Engine hasn't created any task row yet — retry won't help, fall back to JS-side refresh."
+                            : "Task rows exist but the join to ActivityInstances/ActivityDefinition matched nothing — check schema."));
                 return "";
             }
         }
