@@ -442,13 +442,14 @@ namespace ActivityTester
             //SendCaseDocumentsEmailActivity activity = new SendCaseDocumentsEmailActivity();
             // RouteToCreatorStructureManagerActivity activity = new RouteToCreatorStructureManagerActivity();
 
-            RouteToCreatorLineManagerActivity activity = new RouteToCreatorLineManagerActivity();
+            // RouteToCreatorLineManagerActivity activity = new RouteToCreatorLineManagerActivity();
 
-
+            SetCurrentTaskNameActivity activity = new SetCurrentTaskNameActivity();
+            
             var props = new PropertyCollection
             {
                 // For BuildApprovalHistoryActivity:
-                new Property { Name = "DocumentId",       Value = "109" },
+                new Property { Name = "DocumentId",       Value = "137" },
                 new Property { Name = "approvalHistory",  Value = "89" },
 
                 // For StampApprovedDocumentsActivity:
