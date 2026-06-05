@@ -71,45 +71,14 @@ namespace Shared.Activities
         #region Business rules 
 
         // Business rules (per the Job Description DOA matrix):
-        //
-        //   1. <b>Direct CEO reportees</b> � if the position reports directly to
-        //      the CEO (form field <c>isDirectReporteeToCEO == true</c>), the JD is
-        //      escalated straight to the CEO. The CHRO step is intentionally skipped
-        //      because the CEO is the line manager and approving the JD themselves
-        //      supersedes the CHRO review.
-        //        -> nextApprovalRoute = "CEODirect"
-        //
-        //   2. <b>Grade A, B, C, or D (senior roles)</b> � JDs at these grades     // A, B, C,d  chro final if mark ceo will go to ceo aftr chro
+        // if gradeLevel A, B, C,d go to chro then archive to dms
+        // if mark isDirectReporteeToCEO and if gradeLevel A, B, C,d will go to chro then ceo then archive to dms  
 
+        //if gradeLevel e f g h d  it will not go to chro  go to HR Directory or Associate  then dms
 
-        //if e f g h d  it will not go to chro  add new step hrd directoory or assoc dir  then dms
-
-
-
-
-
-        //      require both CHRO endorsement and CEO sign-off. CHRO reviews HR
-        //      consistency (job family, banding, compensation alignment); CEO
-        //      provides final approval.
-        //        -> nextApprovalRoute = "CHROAndCEO"
-        //
-        //   3. <b>Grade E or F (operational roles)</b> � no further escalation
-        //      beyond the Dept Head / AD HR step that has already completed.
-        //        -> nextApprovalRoute = "Direct"
-        //
-        // Inputs (read from <see cref="WorkflowItem.Properties"/>):
-        //   - <c>gradeLevel</c>            : string  "A" | "B" | "C" | "D" | "E" | "F"
-        //   - <c>isDirectReporteeToCEO</c> : string  "true" | "false" (form checkbox)
-        //
-        // Output (written to <see cref="WorkflowItem.Properties"/>):
-        //   - <c>nextApprovalRoute</c>     : "CEODirect" | "CHROAndCEO" | "Direct"
-        //
-        // The output is consumed by the outgoing transitions of the
-        // "RouteByGradeAndReporting" gateway:
-        //
-        //   RouteByGradeAndReporting -> CEOApproval              when nextApprovalRoute == "CEODirect"
-        //   RouteByGradeAndReporting -> CHROApproval -> CEO...   when nextApprovalRoute == "CHROAndCEO"
-        //   RouteByGradeAndReporting -> StampApprovedDocuments   when nextApprovalRoute == "Direct"       
+        //   RouteByGradeAndReporting -> NeedCEOApproval          when nextApprovalRoute == "NeedCEOApproval"
+        //   RouteByGradeAndReporting -> CHROApproval -> CEO...   when nextApprovalRoute == "CHROAndCEOApproval"
+        //   RouteByGradeAndReporting -> HRDirectoryOrAssociate   when nextApprovalRoute == "HRDirectoryOrAssociate"       
         #endregion
 
 
@@ -133,18 +102,18 @@ namespace Shared.Activities
                 string nextApprovalRoute;
                 if (isDirectReportee)
                 {
-                    // CEO direct reportee � straight to CEO, skip CHRO.
-                    nextApprovalRoute = "CEODirect";
+                    
+                    nextApprovalRoute = "";
                 }
                 else if (IsSenior(grade))
                 {
-                    // Grade A-D �no need ceo 
-                    nextApprovalRoute = "CHROAndCEO";
+                    
+                    nextApprovalRoute = "";
                 }
                 else
                 {
-                    // Grade E / F � Dept Head approval is final.
-                    nextApprovalRoute = "Direct";
+                  
+                    nextApprovalRoute = "";
                 }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
