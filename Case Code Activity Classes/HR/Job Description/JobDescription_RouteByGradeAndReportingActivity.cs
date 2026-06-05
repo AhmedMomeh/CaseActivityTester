@@ -68,21 +68,51 @@ namespace Shared.Activities
 
         private static readonly object LogLock = new object();
 
-        #region Business rules 
+        #region Business rules
 
-        // Business rules (per the Job Description DOA matrix):
-        // if gradeLevel A, B, C,d go to chro then archive to dms
-        // if mark isDirectReporteeToCEO and if gradeLevel A, B, C,d will go to chro then ceo then archive to dms  
+        // Routing matrix (grade matching is case-insensitive — "a" == "A"):
+        //
+        //   gradeLevel ∈ {A,B,C,D}  AND  isDirectReporteeToCEO == false
+        //     → CHRO → DMS
+        //     → nextApprovalRoute = "CHROOnly"
+        //
+        //   gradeLevel ∈ {A,B,C,D}  AND  isDirectReporteeToCEO == true
+        //     → CHRO → CEO → DMS
+        //     → nextApprovalRoute = "CHROAndCEO"
+        //
+        //   Anything else  (E, F, G, H, any new grade, empty, unknown)
+        //     → HR Director / Associate → DMS  (skip CHRO + CEO)
+        //     → nextApprovalRoute = "HRDirectorOrAssociate"
+        //
+        // The "anything else" branch means a future-introduced grade letter
+        // (e.g. "I", "J") routes through HR without any code change. An empty
+        // grade also takes this path, with a WARN log entry to flag the bad
+        // input for audit.
+        //
+        // Inputs (workflow item properties):
+        //   - gradeLevel             : string  e.g. "A".."H" (case-insensitive)
+        //   - isDirectReporteeToCEO  : string  "true"/"false" (form checkbox)
+        //
+        // Output:
+        //   - nextApprovalRoute      : "CHROOnly" | "CHROAndCEO" | "HRDirectorOrAssociate"
+        //
+        // The output drives the gateway's outgoing transitions:
+        //   RouteByGradeAndReporting → CHRO   → ArchiveToDMS     (CHROOnly)
+        //   RouteByGradeAndReporting → CHRO   → CEO → ArchiveToDMS (CHROAndCEO)
+        //   RouteByGradeAndReporting → HRDir  → ArchiveToDMS     (HRDirectorOrAssociate)
 
-        //if gradeLevel e f g h d  it will not go to chro  go to HR Directory or Associate  then dms
-
-        //   RouteByGradeAndReporting -> NeedCEOApproval          when nextApprovalRoute == "NeedCEOApproval"
-        //   RouteByGradeAndReporting -> CHROApproval -> CEO...   when nextApprovalRoute == "CHROAndCEOApproval"
-        //   RouteByGradeAndReporting -> HRDirectoryOrAssociate   when nextApprovalRoute == "HRDirectoryOrAssociate"       
         #endregion
 
 
+        // Senior grades require CHRO endorsement. Anything else (E onwards,
+        // or any new / unrecognized grade) falls through to the HR Director
+        // route — no need to enumerate juniors explicitly, which means a
+        // future grade like "I" or "J" routes correctly without a code change.
         private static readonly string[] SeniorGrades = { "A", "B", "C", "D" };
+
+        private const string RouteCHROOnly          = "CHROOnly";
+        private const string RouteCHROAndCEO        = "CHROAndCEO";
+        private const string RouteHRDirectorOrAssoc = "HRDirectorOrAssociate";
 
         public override void Execute(WorkflowItem workflowItem)
         {
@@ -96,30 +126,30 @@ namespace Shared.Activities
 
             try
             {
-                string grade = GetProp(workflowItem, "gradeLevel");
-                bool isDirectReportee = ParseBool(GetProp(workflowItem, "isDirectReporteeToCEO"));
+                string grade            = GetProp(workflowItem, "gradeLevelText");
+                bool   isDirectReportee = ParseBool(GetProp(workflowItem, "isDirectReporteeToCEO"));
+
+                LogInfo($"Input: gradeLevel='{grade}', isDirectReporteeToCEO={isDirectReportee}");
 
                 string nextApprovalRoute;
-                if (isDirectReportee)
+                if (IsSenior(grade))
                 {
-                    
-                    nextApprovalRoute = "";
-                }
-                else if (IsSenior(grade))
-                {
-                    
-                    nextApprovalRoute = "";
+                    // Grades A-D — always CHRO endorsement; CEO only when the
+                    // job reports directly to the CEO.
+                    nextApprovalRoute = isDirectReportee ? RouteCHROAndCEO : RouteCHROOnly;
                 }
                 else
                 {
-                  
-                    nextApprovalRoute = "";
+                    // Anything not in A-D — HR Director (or Associate Director)                 
+                    nextApprovalRoute = RouteHRDirectorOrAssoc;
+
+                    if (string.IsNullOrWhiteSpace(grade))
+                        LogWarn($"gradeLevel is empty — defaulting to {RouteHRDirectorOrAssoc}.");
                 }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
 
-                LogInfo($"---- JobDescription_RouteByGradeAndReportingActivity nextApprovalRole={nextApprovalRoute} ");
-
+                LogInfo($"---- JobDescription_RouteByGradeAndReportingActivity nextApprovalRoute={nextApprovalRoute} ");
                 LogInfo($"---- JobDescription_RouteByGradeAndReportingActivity END    DocumentId={documentId}  result=success ----");
             }
             catch (Exception ex)
@@ -131,6 +161,7 @@ namespace Shared.Activities
 
         public override void Complete(WorkflowItem workflowItem) { }
 
+        // Case-insensitive: "a" / "A" / " a " all match.
         private static bool IsSenior(string g)
         {
             if (string.IsNullOrWhiteSpace(g)) return false;
