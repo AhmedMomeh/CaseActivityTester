@@ -446,8 +446,10 @@ namespace ActivityTester
 
             //  ActivityTemplate activity = new SetCurrentTaskNameActivity();
 
-            ActivityTemplate activity = new CopyDepartmentEvaluationToMetadataActivity();
+            // ActivityTemplate activity = new CopyDepartmentEvaluationToMetadataActivity();
 
+            ActivityTemplate activity = new LoadDepartmentEvaluationFromMetadataActivity();
+            
 
             var props = new PropertyCollection
             {
@@ -468,8 +470,8 @@ namespace ActivityTester
                 //new Property { Name = "grade",            Value = "A" },
                 //new Property { Name = "nextApprovalRole", Value = ""  },
 
-                 // For CopyDepartmentEvaluationToMetadataActivity
-                  new Property { Name = "DocumentId",       Value = "147" },
+                 // For CopyDepartmentEvaluationToMetadataActivity or LoadDepartmentEvaluationFromMetadataActivity
+                  new Property { Name = "DocumentId",       Value = "151" },
                   new Property { Name = "departmentPersonalityScore",  Value = "4" },
                   new Property { Name = "departmentFlexibilityScore",  Value = "5" },
                   new Property { Name = "departmentTotalScore",        Value = "36" },
