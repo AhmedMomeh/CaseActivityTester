@@ -471,7 +471,7 @@ namespace ActivityTester
                 //new Property { Name = "nextApprovalRole", Value = ""  },
 
                  // For CopyDepartmentEvaluationToMetadataActivity or LoadDepartmentEvaluationFromMetadataActivity
-                  new Property { Name = "DocumentId",       Value = "152" },
+                  new Property { Name = "DocumentId",       Value = "154" },
                   new Property { Name = "departmentPersonalityScore",  Value = "4" },
                   new Property { Name = "departmentFlexibilityScore",  Value = "5" },
                   new Property { Name = "departmentTotalScore",        Value = "36" },

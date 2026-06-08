@@ -95,13 +95,6 @@ namespace Shared.Activities
             "departmentTotalScore",
         };
 
-        // The workflow properties in Designer are named with a "Value" suffix
-        // (departmentCommentsValue, departmentPersonalityScoreValue, …) while
-        // the form FIELD keys and Document.Form JSON keys stay plain
-        // (departmentComments, departmentPersonalityScore). This helper bridges
-        // the two — change the suffix here if the Designer convention changes.
-        private const string PropertyNameSuffix = "Value";
-        private static string ToPropertyName(string fieldKey) => fieldKey + PropertyNameSuffix;
 
         private static readonly object LogLock = new object();
 
@@ -151,9 +144,7 @@ namespace Shared.Activities
                         propValue = asString;
                     }
 
-                    // JSON key stays "departmentComments"; the workflow
-                    // property is named "departmentCommentsValue".
-                    SetProp(workflowItem, ToPropertyName(key), propValue);
+                    SetProp(workflowItem, key, propValue);
                     copied++;
                 }
 
