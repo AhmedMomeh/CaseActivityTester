@@ -117,7 +117,7 @@ namespace Shared.Activities
             {
 
                 string position = GetProp(workflowItem, "positionCategory");
-                string grade = GetProp(workflowItem, "gradeLevel");
+                string grade = GetProp(workflowItem, "gradeLevelText");
 
                 string nextApprovalRoute;
                 if (IsException(position))
