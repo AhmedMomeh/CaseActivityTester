@@ -79,6 +79,30 @@ namespace Shared.Activities
             "departmentRecruitmentDate",
         };
 
+        // Properties declared as Number in Designer must receive an int value.
+        // If we pass them as strings ("4"), the engine coerces silently and the
+        // form ends up reading 0 instead of the saved score.
+        private static readonly HashSet<string> NumericFields = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "departmentPersonalityScore",
+            "departmentFlexibilityScore",
+            "departmentCommunicationScore",
+            "departmentTeamPlayerScore",
+            "departmentJobKnowledgeScore",
+            "departmentProblemSolvingScore",
+            "departmentManagementSkillScore",
+            "departmentLeadershipSkillScore",
+            "departmentTotalScore",
+        };
+
+        // The workflow properties in Designer are named with a "Value" suffix
+        // (departmentCommentsValue, departmentPersonalityScoreValue, …) while
+        // the form FIELD keys and Document.Form JSON keys stay plain
+        // (departmentComments, departmentPersonalityScore). This helper bridges
+        // the two — change the suffix here if the Designer convention changes.
+        private const string PropertyNameSuffix = "Value";
+        private static string ToPropertyName(string fieldKey) => fieldKey + PropertyNameSuffix;
+
         private static readonly object LogLock = new object();
 
         public override void Complete(WorkflowItem workflowItem) { }
@@ -110,12 +134,26 @@ namespace Shared.Activities
                     JToken value = docForm[key];
                     if (value == null || value.Type == JTokenType.Null) continue;
 
-                    string asString = value.Type == JTokenType.String
-                        ? (string)value
-                        : value.ToString(Newtonsoft.Json.Formatting.None);
-                    if (string.IsNullOrEmpty(asString)) continue;
+                    object propValue;
+                    if (NumericFields.Contains(key))
+                    {
+                        // Numeric properties must be assigned as int, not string —
+                        // otherwise the workflow engine coerces "4" → 0.
+                        if (!TryReadInt(value, out int n)) continue;
+                        propValue = n;
+                    }
+                    else
+                    {
+                        string asString = value.Type == JTokenType.String
+                            ? (string)value
+                            : value.ToString(Newtonsoft.Json.Formatting.None);
+                        if (string.IsNullOrEmpty(asString)) continue;
+                        propValue = asString;
+                    }
 
-                    SetProp(workflowItem, key, asString);
+                    // JSON key stays "departmentComments"; the workflow
+                    // property is named "departmentCommentsValue".
+                    SetProp(workflowItem, ToPropertyName(key), propValue);
                     copied++;
                 }
 
@@ -163,12 +201,25 @@ namespace Shared.Activities
             catch { return ""; }
         }
 
-        private static void SetProp(WorkflowItem item, string key, string value)
+        // Takes object so numeric properties can be assigned as int and string
+        // properties as string — the workflow engine matches on the declared
+        // type, and a mismatch silently coerces (numbers to 0).
+        private static void SetProp(WorkflowItem item, string key, object value)
         {
             if (item == null || item.Properties == null) return;
             var existing = item.Properties[key];
             if (existing != null) existing.Value = value;
             else                  item.Properties.Add(new Property { Name = key, Value = value });
+        }
+
+        private static bool TryReadInt(JToken t, out int n)
+        {
+            n = 0;
+            if (t == null || t.Type == JTokenType.Null) return false;
+            if (t.Type == JTokenType.Integer) { n = (int)t; return true; }
+            if (t.Type == JTokenType.Float)   { n = (int)Math.Round((double)t); return true; }
+            if (t.Type == JTokenType.String && int.TryParse((string)t, out n)) return true;
+            return false;
         }
 
         // ----- Logging ----------------------------------------------------
