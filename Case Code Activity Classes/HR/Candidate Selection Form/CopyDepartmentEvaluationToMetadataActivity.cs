@@ -73,6 +73,7 @@ namespace Shared.Activities
             "departmentManagementSkillScore",
             "departmentLeadershipSkillScore",
             "departmentTotalScore",
+            "departmentTotalScoreDisplay",  // synthesized below if missing (persistent:false on the form)
             "departmentRecommendation",
             "departmentComments",
             "departmentRecruitmentName",
@@ -80,7 +81,8 @@ namespace Shared.Activities
             "departmentRecruitmentDate",
         };
 
-        // Score-style fields that should be persisted as numbers, not strings.
+        // Score-style fields persisted as JSON numbers. departmentTotalScoreDisplay
+        // stays a string ("n / 40") and is intentionally NOT in this set.
         private static readonly HashSet<string> NumericFields = new(StringComparer.OrdinalIgnoreCase)
         {
             "departmentPersonalityScore",
