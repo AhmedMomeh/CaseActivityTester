@@ -439,18 +439,21 @@ namespace ActivityTester
             //ActivityTemplate activity = new StampApprovedDocumentsActivity();
             //ActivityTemplate activity = new BuildApprovalHistoryActivity();
             //ActivityTemplate activity = new BuildApprovalHistoryActivity();
-            //SendCaseDocumentsEmailActivity activity = new SendCaseDocumentsEmailActivity();
-            // RouteToCreatorStructureManagerActivity activity = new RouteToCreatorStructureManagerActivity();
+            //ActivityTemplate activity = new SendCaseDocumentsEmailActivity();
+            // ActivityTemplate activity = new RouteToCreatorStructureManagerActivity();
 
-            // RouteToCreatorLineManagerActivity activity = new RouteToCreatorLineManagerActivity();
+            // ActivityTemplate activity = new RouteToCreatorLineManagerActivity();
 
-            SetCurrentTaskNameActivity activity = new SetCurrentTaskNameActivity();
-            
+            //  ActivityTemplate activity = new SetCurrentTaskNameActivity();
+
+            ActivityTemplate activity = new CopyDepartmentEvaluationToMetadataActivity();
+
+
             var props = new PropertyCollection
             {
                 // For BuildApprovalHistoryActivity:
-                new Property { Name = "DocumentId",       Value = "140" },
-                new Property { Name = "approvalHistory",  Value = "89" },
+                //new Property { Name = "DocumentId",       Value = "140" },
+                //new Property { Name = "approvalHistory",  Value = "89" },
 
                 // For StampApprovedDocumentsActivity:
                 //new Property { Name = "DocumentId",    Value = "89" },
@@ -464,6 +467,14 @@ namespace ActivityTester
                 // For HRRouteContractByGradeActivity use these instead:
                 //new Property { Name = "grade",            Value = "A" },
                 //new Property { Name = "nextApprovalRole", Value = ""  },
+
+                 // For CopyDepartmentEvaluationToMetadataActivity
+                  new Property { Name = "DocumentId",       Value = "147" },
+                  new Property { Name = "departmentPersonalityScore",  Value = "4" },
+                  new Property { Name = "departmentFlexibilityScore",  Value = "5" },
+                  new Property { Name = "departmentTotalScore",        Value = "36" },
+                  new Property { Name = "departmentRecommendation",    Value = "recommended" },
+                  new Property { Name = "departmentComments",          Value = "Solid candidate." },
             };
 
             // ===================================================================
