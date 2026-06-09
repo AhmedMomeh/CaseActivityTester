@@ -448,8 +448,10 @@ namespace ActivityTester
 
             // ActivityTemplate activity = new CopyDepartmentEvaluationToMetadataActivity();
 
-            ActivityTemplate activity = new LoadDepartmentEvaluationFromMetadataActivity();
-            
+         //   ActivityTemplate activity = new LoadDepartmentEvaluationFromMetadataActivity();
+
+            ActivityTemplate activity = new RouteToStructureManagerByCodeActivity();
+
 
             var props = new PropertyCollection
             {
@@ -457,6 +459,12 @@ namespace ActivityTester
                 //new Property { Name = "DocumentId",       Value = "140" },
                 //new Property { Name = "approvalHistory",  Value = "89" },
 
+                // For BuildApprovalHistoryActivity:
+                new Property { Name = "DocumentId",       Value = "140" },
+                new Property { Name = "departmentCode",  Value = "101IT" },
+
+
+                
                 // For StampApprovedDocumentsActivity:
                 //new Property { Name = "DocumentId",    Value = "89" },
                 //new Property { Name = "requesterName", Value = "Ahmed Momeh" },
@@ -471,12 +479,12 @@ namespace ActivityTester
                 //new Property { Name = "nextApprovalRole", Value = ""  },
 
                  // For CopyDepartmentEvaluationToMetadataActivity or LoadDepartmentEvaluationFromMetadataActivity
-                  new Property { Name = "DocumentId",       Value = "154" },
-                  new Property { Name = "departmentPersonalityScore",  Value = "4" },
-                  new Property { Name = "departmentFlexibilityScore",  Value = "5" },
-                  new Property { Name = "departmentTotalScore",        Value = "36" },
-                  new Property { Name = "departmentRecommendation",    Value = "recommended" },
-                  new Property { Name = "departmentComments",          Value = "Solid candidate." },
+                  //new Property { Name = "DocumentId",       Value = "154" },
+                  //new Property { Name = "departmentPersonalityScore",  Value = "4" },
+                  //new Property { Name = "departmentFlexibilityScore",  Value = "5" },
+                  //new Property { Name = "departmentTotalScore",        Value = "36" },
+                  //new Property { Name = "departmentRecommendation",    Value = "recommended" },
+                  //new Property { Name = "departmentComments",          Value = "Solid candidate." },
             };
 
             // ===================================================================
