@@ -129,14 +129,12 @@ window.JDEAuthHeader = "Basic SkRFT1JDSDp1Y2pkZTEyMw==";   // JDEORCH:ucjde123
 
 $(document).ready(function () {
 
-    // Preload the currently-logged-in user's profile from IAM so it's
-    // available (window.CurrentUserInfo / window.CurrentUserEmail) by the
-    // time forms render and need it.
-    loadCurrentUserFromIAM();
-
-    // Resolve email → JDE employee record → window.IsHR. Reuses the IAM
-    // email above via its internal cache, so only one IAM round-trip total.
-    loadIsHRFromJDE();
+    // Preload the currently-logged-in user's profile from IAM, then chain
+    // the JDE lookup so it runs only AFTER window.CurrentUserEmail is set.
+    // One IAM round-trip total — JDE simply reads the cached email.
+    loadCurrentUserFromIAM(function (email) {
+        if (email) loadIsHRFromJDE();
+    });
 
     // loadTaskhistory in Application metadata
     $(document).ajaxSuccess(function (event, xhr, settings) {
@@ -245,30 +243,34 @@ function loadIsHRFromJDE(callback) {
         return;
     }
 
-    loadCurrentUserFromIAM(function (email) {
-        if (!email) {
-            console.warn('loadIsHRFromJDE: no email from IAM — skipping JDE lookup');
-            return;
-        }
+    // Read the email already cached by loadCurrentUserFromIAM. The caller
+    // is responsible for ensuring that runs first (the $(document).ready
+    // chain at the top of this file does exactly that).
+    var email = window.CurrentUserEmail;
+    if (!email) {
+        console.warn('loadIsHRFromJDE: window.CurrentUserEmail not set yet — call loadCurrentUserFromIAM first.');
+        return;
+    }
 
-        $.ajax({
-            url: `${JDEURL}/GetEmployeeInfoByEmail`,
-            method: 'POST',
-            contentType: 'application/json',
-            headers: {
-                'Accept'        : 'application/json',
-                'Authorization' : 'Basic SkRFT1JDSDp1Y2pkZTEyMw=='   // JDEORCH:ucjde123
-            },
-            data: JSON.stringify({ Email: email }),
-            success: function (emp) {
-                window.IsHR              = !!(emp && emp.IsHR);
-                window.EmpDepartmentCode = (emp && emp.DepartmentCode)        || '';                
-                if (typeof callback === 'function') callback(window.IsHR);
-            },
-            error: function (xhr, status, error) {
-                console.error('JDE GetEmployeeInfoByEmail failed:', status, error, xhr.responseText);
-            }
-        });
+    $.ajax({
+        url: `${JDEURL}/GetEmployeeInfoByEmail`,
+        method: 'POST',
+        contentType: 'application/json',
+        headers: {
+            'Accept'        : 'application/json',
+            'Authorization' : 'Basic SkRFT1JDSDp1Y2pkZTEyMw=='   // JDEORCH:ucjde123
+        },
+        data: JSON.stringify({ Email: email }),
+        success: function (emp) {
+            window.IsHR              = !!(emp && emp.IsHR);
+            window.EmpDepartmentCode = (emp && emp.DepartmentCode) || '';
+            window.EmpName = (emp && emp.Name) || '';
+            window.EmpJobDesc = (emp && emp.JobDesc) || '';
+            if (typeof callback === 'function') callback(window.IsHR);
+        },
+        error: function (xhr, status, error) {
+            console.error('JDE GetEmployeeInfoByEmail failed:', status, error, xhr.responseText);
+        }
     });
 }
 
