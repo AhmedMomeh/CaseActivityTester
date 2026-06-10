@@ -129,12 +129,18 @@ window.JDEAuthHeader = "Basic SkRFT1JDSDp1Y2pkZTEyMw==";   // JDEORCH:ucjde123
 
 $(document).ready(function () {
 
-    // Preload the currently-logged-in user's profile from IAM, then chain
-    // the JDE lookup so it runs only AFTER window.CurrentUserEmail is set.
-    // One IAM round-trip total — JDE simply reads the cached email.
-    loadCurrentUserFromIAM(function (email) {
-        if (email) loadIsHRFromJDE();
-    });
+    // Run the IAM + JDE preload ONLY when the page actually has a form that
+    // uses the integration. Two markers count as "uses JDE":
+    //   - a URL data source pointing at JDEURL / /jderest/orchestrator
+    //   - any reference to window.IsHR / window.CurrentUserEmail /
+    //     window.EmpDepartmentCode / window.EmpDepartmentDesc /
+    //     window.EmpName / window.EmpJobDesc  in customConditional /
+    //     customDefaultValue / calculateValue expressions.
+    //
+    // Detection is automatic — no per-form opt-in required. Forms that
+    // don't match (Inbox, Search, other apps' forms) get zero IAM/JDE
+    // traffic and the loader never fires. See attachJdeAutoBootstrap().
+    attachJdeAutoBootstrap();
 
     // loadTaskhistory in Application metadata
     $(document).ajaxSuccess(function (event, xhr, settings) {
@@ -272,6 +278,86 @@ function loadIsHRFromJDE(callback) {
             console.error('JDE GetEmployeeInfoByEmail failed:', status, error, xhr.responseText);
         }
     });
+}
+
+
+// ---------------------------------------------------------------------------
+// attachJdeAutoBootstrap()
+//
+// Replaces the old unconditional preload. Watches Form.io for the form(s)
+// rendered on this page; when a form's schema references the JDE
+// integration — directly via JDEURL / "/jderest/orchestrator", or
+// indirectly via the globals the bootstrap populates (window.IsHR,
+// window.CurrentUserEmail, window.EmpDepartmentCode, …) — fires the
+// chain ONCE and forces every loaded form to redraw so any
+// customConditional / customDefaultValue keyed off those globals
+// re-evaluates with real values.
+//
+// Pages that don't render a JDE-using form (Inbox, Search, other apps)
+// never trigger the chain → no IAM/JDE round-trip and no loader.
+// Forms can still call loadIsHRFromJDE() / loadCurrentUserFromIAM()
+// directly if they need the data on demand.
+// ---------------------------------------------------------------------------
+function attachJdeAutoBootstrap() {
+    if (window.__jdeBootstrapWatcherInstalled) return;
+    window.__jdeBootstrapWatcherInstalled = true;
+
+    // Match either a JDE URL reference (dropdown URL data source) OR one
+    // of the globals populated by the chain. The regex covers all
+    // window.Emp* readers without listing each suffix individually.
+    var BOOTSTRAP_NEEDLES = /\/jderest\/orchestrator|window\.JDEURL|window\.IsHR|window\.CurrentUserEmail|window\.Emp[A-Za-z]+/;
+
+    var fired = false;
+    function maybeFireFor(formInstance) {
+        if (fired) return;
+        try {
+            // Form.io exposes the loaded schema as instance.form (and on
+            // some builds as instance.schema). Either is fine — we just
+            // need a JSON-serializable shape to scan.
+            var schema = formInstance && (formInstance.form || formInstance.schema);
+            if (!schema) return;
+            var s = JSON.stringify(schema);
+            if (!BOOTSTRAP_NEEDLES.test(s)) return;
+            fired = true;
+            runJdeBootstrap();
+        } catch (e) {
+            console.warn('JDE auto-bootstrap detect failed:', e);
+        }
+    }
+
+    function runJdeBootstrap() {
+        loadCurrentUserFromIAM(function (email) {
+            if (!email) return;
+            loadIsHRFromJDE(function () {
+                // Globals are now set — re-evaluate any customConditional
+                // / customDefaultValue that referenced them before they
+                // existed. redraw() is the lightest hook that covers both.
+                if (typeof Formio !== 'undefined' && Formio.forms) {
+                    Object.values(Formio.forms).forEach(function (f) {
+                        try { if (f && f.redraw) f.redraw(); } catch (e) {}
+                    });
+                }
+            });
+        });
+    }
+
+    // 1) Forms loaded AFTER we install: hook Formio's formLoad event.
+    if (typeof Formio !== 'undefined' && Formio.events && typeof Formio.events.on === 'function') {
+        try { Formio.events.on('formLoad', maybeFireFor); } catch (e) {}
+    }
+
+    // 2) Forms already rendered (or builds without 'formLoad'): poll
+    //    Formio.forms briefly. Bails out as soon as we fire OR after a
+    //    short window — keeps the page quiet on non-form views.
+    var tries = 0;
+    (function watchForms() {
+        if (fired) return;
+        if (typeof Formio !== 'undefined' && Formio.forms) {
+            Object.values(Formio.forms).forEach(maybeFireFor);
+        }
+        if (fired) return;
+        if (tries++ < 100) setTimeout(watchForms, 100);   // ~10 s total
+    })();
 }
 
 
