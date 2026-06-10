@@ -73,16 +73,16 @@ namespace Shared.Activities
         // Routing matrix (grade matching is case-insensitive — "a" == "A"):
         //
         //   gradeLevel ∈ {A,B,C,D}  AND  isDirectReporteeToCEO == false
-        //     → CHRO → DMS
-        //     → nextApprovalRoute = "CHROOnly"
+        //     → CPCO → DMS
+        //     → nextApprovalRoute = "CPCOOnly"
         //
         //   gradeLevel ∈ {A,B,C,D}  AND  isDirectReporteeToCEO == true
-        //     → CHRO → CEO → DMS
-        //     → nextApprovalRoute = "CHROAndCEO"
+        //     → CPCO → CEO → DMS
+        //     → nextApprovalRoute = "CPCOAndCEO"
         //
         //   Anything else  (E, F, G, H, any new grade, empty, unknown)
-        //     → HR Director / Associate → DMS  (skip CHRO + CEO)
-        //     → nextApprovalRoute = "HRDirectorOrAssociate"
+        //     → HR Director / Associate → DMS  (skip CPCO + CEO)
+        //     → nextApprovalRoute = "ArchiveToDMS"
         //
         // The "anything else" branch means a future-introduced grade letter
         // (e.g. "I", "J") routes through HR without any code change. An empty
@@ -94,25 +94,25 @@ namespace Shared.Activities
         //   - isDirectReporteeToCEO  : string  "true"/"false" (form checkbox)
         //
         // Output:
-        //   - nextApprovalRoute      : "CHROOnly" | "CHROAndCEO" | "HRDirectorOrAssociate"
+        //   - nextApprovalRoute      : "CPCOOnly" | "CPCOAndCEO" | "ArchiveToDMS"
         //
         // The output drives the gateway's outgoing transitions:
-        //   RouteByGradeAndReporting → CHRO   → ArchiveToDMS     (CHROOnly)
-        //   RouteByGradeAndReporting → CHRO   → CEO → ArchiveToDMS (CHROAndCEO)
-        //   RouteByGradeAndReporting → HRDir  → ArchiveToDMS     (HRDirectorOrAssociate)
+        //   RouteByGradeAndReporting → CPCO   → ArchiveToDMS     (CPCOOnly)
+        //   RouteByGradeAndReporting → CPCO   → CEO → ArchiveToDMS (CPCOAndCEO)
+        //   RouteByGradeAndReporting →  ArchiveToDMS   
 
         #endregion
 
 
-        // Senior grades require CHRO endorsement. Anything else (E onwards,
+        // Senior grades require CPCO endorsement. Anything else (E onwards,
         // or any new / unrecognized grade) falls through to the HR Director
         // route — no need to enumerate juniors explicitly, which means a
         // future grade like "I" or "J" routes correctly without a code change.
         private static readonly string[] SeniorGrades = { "A", "B", "C", "D" };
 
-        private const string RouteCHROOnly          = "CHROOnly";
-        private const string RouteCHROAndCEO        = "CHROAndCEO";
-        private const string RouteHRDirectorOrAssoc = "HRDirectorOrAssociate";
+        private const string RouteCPCOOnly          = "CPCOOnly";
+        private const string RouteCPCOAndCEO        = "CPCOAndCEO";
+        private const string RouteArchiveToDMS = "ArchiveToDMS";
 
         public override void Execute(WorkflowItem workflowItem)
         {
@@ -134,17 +134,17 @@ namespace Shared.Activities
                 string nextApprovalRoute;
                 if (IsSenior(grade))
                 {
-                    // Grades A-D — always CHRO endorsement; CEO only when the
+                    // Grades A-D — always CPCO endorsement; CEO only when the
                     // job reports directly to the CEO.
-                    nextApprovalRoute = isDirectReportee ? RouteCHROAndCEO : RouteCHROOnly;
+                    nextApprovalRoute = isDirectReportee ? RouteCPCOAndCEO : RouteCPCOOnly;
                 }
                 else
                 {
                     // Anything not in A-D — HR Director (or Associate Director)                 
-                    nextApprovalRoute = RouteHRDirectorOrAssoc;
+                    nextApprovalRoute = RouteArchiveToDMS;
 
                     if (string.IsNullOrWhiteSpace(grade))
-                        LogWarn($"gradeLevel is empty — defaulting to {RouteHRDirectorOrAssoc}.");
+                        LogWarn($"gradeLevel is empty — defaulting to {RouteArchiveToDMS}.");
                 }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
