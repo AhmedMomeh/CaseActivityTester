@@ -114,18 +114,14 @@
        Display: shown in Solution Explorer under lib\ (via <Link>).
        Output : copied flat to bin\         (via <TargetPath>). -->
   <ItemGroup>
-    <None Include="lib\*.dll"
-          Exclude="lib\Intalio.Case.Core.dll;
-                   lib\Intalio.Case.Portal.Core.dll;
-                   lib\Intalio.Core.dll;
-                   lib\Newtonsoft.Json.dll;
-                   lib\Aspose.PDF.dll;
-                   lib\Aspose.Words.dll;
-                   lib\SkiaSharp.dll">
+    <None Include="lib\*.dll" Exclude="lib\Intalio.Case.Core.dll;&#xA;                   lib\Intalio.Case.Portal.Core.dll;&#xA;                   lib\Intalio.Core.dll;&#xA;                   lib\Newtonsoft.Json.dll;&#xA;                   lib\Aspose.PDF.dll;&#xA;                   lib\Aspose.Words.dll;&#xA;                   lib\SkiaSharp.dll">
       <Link>lib\%(Filename)%(Extension)</Link>
       <TargetPath>%(Filename)%(Extension)</TargetPath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Case Code Activity Classes\Finance\LPO Invoice\" />
   </ItemGroup>
 
 </Project>
