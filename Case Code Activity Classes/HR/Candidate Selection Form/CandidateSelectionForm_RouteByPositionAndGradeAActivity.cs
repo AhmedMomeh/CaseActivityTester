@@ -97,11 +97,32 @@ namespace Shared.Activities
         #endregion
 
 
+        // Senior grades require CEO endorsement. Matched with Contains, so
+        // "A", "A1", "B2", "C", "C2", "D", "D1", "D2", "Grade-A", " d "
+        // all count as senior — while "E", "F2", "G", "H" don't. A future
+        // grade letter like "I"/"J" not in this list automatically routes
+        // through the non-senior branch without a code change.
         private static readonly string[] SeniorGrades = { "A", "B", "C", "D" };
-        private static readonly string[] ExceptionPositions =
+
+        // Exception positions — when the job title matches any of these, the
+        // request bypasses the grade logic and routes straight to BoD.
+        // Stored normalized (lowercased, all non-alphanumeric chars stripped)
+        // so the lookup tolerates spacing / dashes / dots / casing variations:
+        //   "CEO" / "C.E.O." / "ceo"                       → match
+        //   "VP-Internal Audit" / "VP Internal Audit"      → match
+        //   "Board Office Manager" / "BoardOfficeManager"  → match
+        //   "N-1 Leadership" / "N1Leadership" / "n1 lead.."→ match
+        private static readonly string[] ExceptionPositionsNormalized =
         {
-              "CEO", "VPInternalAudit", "BoardOfficeManager", "N1Leadership"
+            "ceo",
+            "vpinternalaudit",
+            "boardofficemanager",
+            "n1leadership",
         };
+
+        private const string RouteBoDApproval  = "BoDApproval";
+        private const string RouteCEOApproval  = "CEOApproval";
+        private const string RouteArchiveToDMS = "ArchiveToDMS";
 
         public override void Execute(WorkflowItem workflowItem)
         {
@@ -115,57 +136,76 @@ namespace Shared.Activities
 
             try
             {
-
                 string position = GetProp(workflowItem, "jobTitleText");
-                string grade = GetProp(workflowItem, "gradeLevelText");
+                string grade    = GetProp(workflowItem, "gradeLevelText");
+
+                LogInfo($"Input: jobTitle='{position}', gradeLevel='{grade}'");
 
                 string nextApprovalRoute;
-                if (IsException(position))
+                if (IsExceptionPosition(position))
                 {
-                    // Rule 1: any of the four protected roles -> Board of Directors approval.
-                    nextApprovalRoute = "BoDApproval";
+                    // CEO / VP-Internal Audit / Board Office Manager / N-1
+                    // Leadership — these protected roles always escalate to
+                    // the Board of Directors regardless of grade.
+                    nextApprovalRoute = RouteBoDApproval;
+                    LogInfo($"Exception position '{position}' matched → routing via {RouteBoDApproval}.");
                 }
                 else if (IsSenior(grade))
                 {
-                    // Rule 2: Grade A-D non-exception -> CEO approval.
-                    nextApprovalRoute = "CEOApproval";
+                    // Grades A-D (incl. A1, B2, C2, D1, …) — CEO approval.
+                    nextApprovalRoute = RouteCEOApproval;
                 }
                 else
                 {
-                    // Rule 3: Grade E/F (or unknown) non-exception -> CPCO was final.
-                    nextApprovalRoute = "ArchiveToDMS";
+                    // Anything not senior (E, F, F2, G, H, empty, unknown)
+                    // — CPCO was the final step; archive directly.
+                    nextApprovalRoute = RouteArchiveToDMS;
+
+                    if (string.IsNullOrWhiteSpace(grade))
+                        LogWarn($"gradeLevel is empty — defaulting to {RouteArchiveToDMS}.");
                 }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
 
                 LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeAActivity nextApprovalRoute={nextApprovalRoute} ");
-
                 LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeAActivity END    DocumentId={documentId}  result=success ----");
             }
             catch (Exception ex)
             {
                 LogException("Execute() failed", ex);
-                LogInfo($"----  CandidateSelectionForm_RouteByPositionAndGradeAActivity END    DocumentId={documentIdStr}  result=FAILED ----");            
+                LogInfo($"----  CandidateSelectionForm_RouteByPositionAndGradeAActivity END    DocumentId={documentIdStr}  result=FAILED ----");
             }
         }
 
         public override void Complete(WorkflowItem workflowItem) { }
 
-        private static bool IsException(string p)
-        {
-            if (string.IsNullOrWhiteSpace(p)) return false;
-            string norm = p.Trim();
-            foreach (var x in ExceptionPositions)
-                if (string.Equals(x, norm, StringComparison.OrdinalIgnoreCase)) return true;
-            return false;
-        }
-
+        // Case-insensitive, substring-based: "A", "A1", "B2", "C2", "D",
+        // "D1", "D2", "Grade-A", "  d  " all match. "E", "F2", "G", "H" don't.
         private static bool IsSenior(string g)
         {
             if (string.IsNullOrWhiteSpace(g)) return false;
-            string up = g.Trim().ToUpperInvariant();
-            foreach (var s in SeniorGrades) if (s == up) return true;
+            string up = g.ToUpperInvariant();
+            foreach (var s in SeniorGrades) if (up.Contains(s)) return true;
             return false;
+        }
+
+        // Normalize-then-match for exception positions. Strips every
+        // non-alphanumeric character (spaces, dashes, dots, parentheses)
+        // and lowercases the rest so input variations all collapse to the
+        // same canonical form before comparison.
+        private static bool IsExceptionPosition(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return false;
+            string norm = Normalize(title);
+            foreach (var x in ExceptionPositionsNormalized) if (x == norm) return true;
+            return false;
+        }
+
+        private static string Normalize(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (char c in s) if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+            return sb.ToString();
         }
 
         private static string GetProp(WorkflowItem i, string k)
