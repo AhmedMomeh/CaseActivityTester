@@ -108,10 +108,26 @@ namespace Shared.Activities
         // or any new / unrecognized grade) falls through to the HR Director
         // route — no need to enumerate juniors explicitly, which means a
         // future grade like "I" or "J" routes correctly without a code change.
+        // Matched with Contains, so "A", "A1", "A2", "B2", "C", "C2", "D",
+        // "D1", "D2" all count as senior, while "E", "F", "F2", "G", "H" don't.
         private static readonly string[] SeniorGrades = { "A", "B", "C", "D" };
 
-        private const string RouteCPCOOnly          = "CPCOOnly";
-        private const string RouteCPCOAndCEO        = "CPCOAndCEO";
+        // Exception positions — when the job title matches any of these, the
+        // request bypasses the grade logic and always routes via CPCO+CEO.
+        // Stored in normalized form (lowercased, all non-alphanumeric chars
+        // stripped) so the lookup tolerates spacing, dashes, dots, casing:
+        //   "CEO" / "C.E.O." / "ceo"                       → match
+        //   "VP-Internal Audit" / "VP Internal Audit"      → match
+        //   "Board Office Manager" / "BoardOfficeManager"  → match
+        private static readonly string[] ExceptionPositionsNormalized =
+        {
+            "ceo",
+            "vpinternalaudit",
+            "boardofficemanager",
+        };
+
+        private const string RouteCPCOOnly     = "CPCOOnly";
+        private const string RouteCPCOAndCEO   = "CPCOAndCEO";
         private const string RouteArchiveToDMS = "ArchiveToDMS";
 
         public override void Execute(WorkflowItem workflowItem)
@@ -130,18 +146,28 @@ namespace Shared.Activities
                 string grade  = GetProp(workflowItem, "gradeLevelText");
                 bool   isDirectReportee = ParseBool(GetProp(workflowItem, "isDirectReporteeToCEO"));
 
-                LogInfo($"Input: gradeLevel='{grade}', isDirectReporteeToCEO={isDirectReportee}");
+                LogInfo($"Input: jobTitle='{jobTitleText}', gradeLevel='{grade}', isDirectReporteeToCEO={isDirectReportee}");
 
                 string nextApprovalRoute;
-                if (IsSenior(grade))
+                if (IsExceptionPosition(jobTitleText))
                 {
-                    // Grades A-D — always CPCO endorsement; CEO only when the
-                    // job reports directly to the CEO.
+                    // CEO / VP-Internal Audit / Board Office Manager — these
+                    // top-of-house roles always go through CPCO + CEO,
+                    // bypassing grade logic entirely.
+                    nextApprovalRoute = RouteCPCOAndCEO;
+                    LogInfo($"Exception position '{jobTitleText}' matched → routing via CPCO+CEO.");
+                }
+                else if (IsSenior(grade))
+                {
+                    // Grades A-D (incl. A1, B2, C2, D1, …) — always CPCO
+                    // endorsement; CEO only when the job reports directly
+                    // to the CEO.
                     nextApprovalRoute = isDirectReportee ? RouteCPCOAndCEO : RouteCPCOOnly;
                 }
                 else
                 {
-                    // Anything not in A-D — HR Director (or Associate Director)                 
+                    // Anything not senior (E, F, F2, G, H, empty, unknown)
+                    // — straight to ArchiveToDMS, no CPCO/CEO step.
                     nextApprovalRoute = RouteArchiveToDMS;
 
                     if (string.IsNullOrWhiteSpace(grade))
@@ -162,13 +188,33 @@ namespace Shared.Activities
 
         public override void Complete(WorkflowItem workflowItem) { }
 
-        // Case-insensitive: "a" / "A" / " a " all match.
+        // Case-insensitive, substring-based: "A", "A1", "B2", "C2", "D",
+        // "D1", "D2", "Grade-A", "  d  " all match. "E", "F2", "G", "H" don't.
         private static bool IsSenior(string g)
         {
             if (string.IsNullOrWhiteSpace(g)) return false;
-            string up = g.Trim().ToUpperInvariant();
-            foreach (var s in SeniorGrades) if (s == up) return true;
+            string up = g.ToUpperInvariant();
+            foreach (var s in SeniorGrades) if (up.Contains(s)) return true;
             return false;
+        }
+
+        // Normalize-then-match for exception positions. Strips every
+        // non-alphanumeric character (spaces, dashes, dots, parentheses)
+        // and lowercases the rest so input variations all collapse to the
+        // same canonical form before comparison.
+        private static bool IsExceptionPosition(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return false;
+            string norm = Normalize(title);
+            foreach (var x in ExceptionPositionsNormalized) if (x == norm) return true;
+            return false;
+        }
+
+        private static string Normalize(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (char c in s) if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+            return sb.ToString();
         }
 
         private static bool ParseBool(string s)
