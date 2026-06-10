@@ -93,9 +93,9 @@ namespace Shared.Activities
 
             try
             {
-                string gradeLevel = GetProp(workflowItem, "gradeLevel");
+                string gradeLevel = GetProp(workflowItem, "gradeLevelText");
                 string budget = GetProp(workflowItem, "budgetStatus");
-                string position = GetProp(workflowItem, "requiredPosition").ToLowerInvariant();
+                string position = GetProp(workflowItem, "jobTitleText").ToLowerInvariant();
 
                 string nextApprovalRoute;
 
