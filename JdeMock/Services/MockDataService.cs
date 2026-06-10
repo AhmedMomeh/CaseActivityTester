@@ -26,16 +26,35 @@ namespace ActivityTester.JdeMock.Services
         };
 
         // -------- Jobs --------
+        // GradeLevel includes the sub-band (e.g. "A1", "B2", "F2"); Grade is the
+        // letter alone (e.g. "A", "B", "F"). Department owners are seeded per
+        // department so every job in the same dept reports up to the same head
+        // — matches how real JDE serialises HCM master data.
         private readonly List<JobEntry> _jobs = new()
         {
             new() { JobCode = "IT132", JobTitleEnglish = "Assistant Manager Cloud & Infrastructure",
-                    Department = "101IT", DepartmentDescription = "Information Technology Dept." , PayGrade="A"},
+                    Department = "101IT", DepartmentDescription = "Information Technology Dept.",
+                    GradeLevel = "A1", Grade = "A",
+                    DepartmentOwner = 1100100, DepartmentOwnerName = "AHMED ALI AL MARZOOQI",
+                    DepartmentOwnerJobCode = "IT001", DepartmentOwnerJobTitle = "Chief Information Officer" },
+
             new() { JobCode = "IT131", JobTitleEnglish = "Senior Manager - Architecture Enterprise",
-                    Department = "101IT", DepartmentDescription = "Information Technology Dept." , PayGrade="B"},
+                    Department = "101IT", DepartmentDescription = "Information Technology Dept.",
+                    GradeLevel = "B2", Grade = "B",
+                    DepartmentOwner = 1100100, DepartmentOwnerName = "AHMED ALI AL MARZOOQI",
+                    DepartmentOwnerJobCode = "IT001", DepartmentOwnerJobTitle = "Chief Information Officer" },
+
             new() { JobCode = "HR101", JobTitleEnglish = "Senior HR Business Partner",
-                    Department = "101HR", DepartmentDescription = "Human Resources Dept." , PayGrade="C"},
+                    Department = "101HR", DepartmentDescription = "Human Resources Dept.",
+                    GradeLevel = "C2", Grade = "C",
+                    DepartmentOwner = 1100200, DepartmentOwnerName = "FATIMA SALEM AL SUWAIDI",
+                    DepartmentOwnerJobCode = "HR001", DepartmentOwnerJobTitle = "Chief Human Resources Officer" },
+
             new() { JobCode = "FN201", JobTitleEnglish = "Finance Analyst",
-                    Department = "101FN", DepartmentDescription = "Finance Dept." , PayGrade = "D"},
+                    Department = "101FN", DepartmentDescription = "Finance Dept.",
+                    GradeLevel = "D1", Grade = "D",
+                    DepartmentOwner = 1100300, DepartmentOwnerName = "KHALID ABDULLA AL HOSANI",
+                    DepartmentOwnerJobCode = "FN001", DepartmentOwnerJobTitle = "Chief Financial Officer" },
         };
 
         // -------- Nationalities (ISO 3166-1 alpha-2 subset, formatted to match JDE) --------
