@@ -119,11 +119,13 @@ namespace Shared.Activities
         //   "CEO" / "C.E.O." / "ceo"                       → match
         //   "VP-Internal Audit" / "VP Internal Audit"      → match
         //   "Board Office Manager" / "BoardOfficeManager"  → match
+        //   "Manager - Board Office" / "Manager Board Off" → match
         private static readonly string[] ExceptionPositionsNormalized =
         {
             "ceo",
             "vpinternalaudit",
             "boardofficemanager",
+            "managerboardoffice",
         };
 
         private const string RouteCPCOOnly     = "CPCOOnly";
