@@ -126,7 +126,8 @@ namespace Shared.Activities
 
             try
             {
-                string grade            = GetProp(workflowItem, "gradeLevelText");
+                string jobTitleText = GetProp(workflowItem, "jobTitleText");
+                string grade  = GetProp(workflowItem, "gradeLevelText");
                 bool   isDirectReportee = ParseBool(GetProp(workflowItem, "isDirectReporteeToCEO"));
 
                 LogInfo($"Input: gradeLevel='{grade}', isDirectReporteeToCEO={isDirectReportee}");
