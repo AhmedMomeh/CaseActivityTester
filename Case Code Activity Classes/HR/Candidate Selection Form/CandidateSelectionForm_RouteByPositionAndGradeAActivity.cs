@@ -87,7 +87,7 @@ namespace Shared.Activities
         ///        -> nextApprovalRoute = "Direct"
         ///
         /// Inputs  (form fields persisted as WorkflowItem.Properties):
-        ///   - positionCategory : "Standard" | "CEO" | "VPInternalAudit" |
+        ///   - jobTitleText : "Standard" | "CEO" | "VPInternalAudit" |
         ///                        "BoardOfficeManager" | "N1Leadership"
         ///   - gradeLevel       : "A" | "B" | "C" | "D" | "E" | "F"
         ///
@@ -116,7 +116,7 @@ namespace Shared.Activities
             try
             {
 
-                string position = GetProp(workflowItem, "positionCategory");
+                string position = GetProp(workflowItem, "jobTitleText");
                 string grade = GetProp(workflowItem, "gradeLevelText");
 
                 string nextApprovalRoute;
@@ -133,7 +133,7 @@ namespace Shared.Activities
                 else
                 {
                     // Rule 3: Grade E/F (or unknown) non-exception -> CPCO was final.
-                    nextApprovalRoute = "Direct";
+                    nextApprovalRoute = "ArchiveToDMS";
                 }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
