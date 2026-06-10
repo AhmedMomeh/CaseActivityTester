@@ -72,14 +72,36 @@ namespace Shared.Activities
         private static readonly object LogLock = new object();
 
         // Per Delegation of Authority:
-        //   Non-Budgeted, Grade D and above  -> CEO      
         //   Exception positions              -> Board of Directors
-        //   Budgeted standard                -> Standard (no extra approval)
-        private static readonly string[] CeoGrades = { "A", "B", "C", "D" };
-        private static readonly string[] ExceptionKeywords =
+        //   Non-Budgeted, Grade A..D         -> CEO
+        //   Anything else                    -> RouteArchiveToDMS (no extra approval)
+
+        // Senior grades trigger CEO approval on non-budgeted requests.
+        // Matched with Contains, so "A", "A1", "B2", "C", "C2", "D", "D1",
+        // "D2", "Grade-A", "  d  " all count as senior — while "E", "F2",
+        // "G", "H" don't. A future grade letter not listed here automatically
+        // falls through to the RouteArchiveToDMS path with no code change.
+        private static readonly string[] SeniorGrades = { "A", "B", "C", "D" };
+
+        // Exception positions — when the job title matches any of these, the
+        // request bypasses budget / grade logic and routes straight to BoD.
+        // Stored normalized (lowercased, all non-alphanumeric chars stripped)
+        // so the lookup tolerates spacing / dashes / dots / casing variations:
+        //   "CEO" / "C.E.O." / "ceo"                       → match
+        //   "VP-Internal Audit" / "VP Internal Audit"      → match
+        //   "Board Office Manager" / "BoardOfficeManager"  → match
+        //   "N-1 Leadership" / "N1Leadership"              → match
+        private static readonly string[] ExceptionPositionsNormalized =
         {
-              "ceo", "vp internal audit", "board office manager", "N-1 Leadership"   // got to ceo then bord  it ceo go to board
+            "ceo",
+            "vpinternalaudit",
+            "boardofficemanager",
+            "n1leadership",
         };
+
+        private const string RouteBoardApproval = "BoardApproval";
+        private const string RouteCEOApproval   = "CEOApproval";
+        private const string RouteArchiveToDMS = "ArchiveToDMS";
 
         public override void Execute(WorkflowItem workflowItem)
         {
@@ -93,32 +115,40 @@ namespace Shared.Activities
 
             try
             {
+                string position   = GetProp(workflowItem, "jobTitleText");
                 string gradeLevel = GetProp(workflowItem, "gradeLevelText");
-                string budget = GetProp(workflowItem, "budgetStatus");
-                string position = GetProp(workflowItem, "jobTitleText").ToLowerInvariant();
+                string budget     = GetProp(workflowItem, "budgetStatus");
+                bool   isNonBudgeted = string.Equals(budget?.Trim(), "nonBudgeted", StringComparison.OrdinalIgnoreCase);
+
+                LogInfo($"Input: jobTitle='{position}', gradeLevel='{gradeLevel}', budgetStatus='{budget}'");
 
                 string nextApprovalRoute;
-
-                if (ExceptionKeywords.Any(k => position.Contains(k, StringComparison.OrdinalIgnoreCase)))
+                if (IsExceptionPosition(position))
                 {
-                    nextApprovalRoute = "BoardApproval";
+                    // CEO / VP-Internal Audit / Board Office Manager / N-1
+                    // Leadership — these protected roles always escalate to
+                    // the Board of Directors regardless of budget or grade.
+                    nextApprovalRoute = RouteBoardApproval;
+                    LogInfo($"Exception position '{position}' matched → routing via {RouteBoardApproval}.");
                 }
-                else if (string.Equals(budget, "nonBudgeted", StringComparison.OrdinalIgnoreCase))
+                else if (isNonBudgeted && IsSenior(gradeLevel))
                 {
-                    if (CeoGrades.Contains(gradeLevel, StringComparer.OrdinalIgnoreCase))
-                        nextApprovalRoute = "CEOApproval";
-                    else
-                        nextApprovalRoute = "Standard"; // budgeted -> no extra approval
+                    // Non-budgeted A-D hires need CEO sign-off.
+                    nextApprovalRoute = RouteCEOApproval;
                 }
                 else
                 {
-                    nextApprovalRoute = "Standard"; // budgeted -> no extra approval
+                    // Anything not senior (E, F, F2, G, H, empty, unknown)
+                    // — CPCO was the final step; archive directly.
+                    nextApprovalRoute = RouteArchiveToDMS;
+
+                    if (string.IsNullOrWhiteSpace(gradeLevel))
+                        LogWarn($"gradeLevel is empty — defaulting to {RouteArchiveToDMS}.");
                 }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
 
                 LogInfo($"---- HiringRequest_NextApprovalRoleActivity nextApprovalRoute={nextApprovalRoute} ");
-
                 LogInfo($"---- HiringRequest_NextApprovalRoleActivity END    DocumentId={documentId}  result=success ----");
             }
             catch (Exception ex)
@@ -131,6 +161,35 @@ namespace Shared.Activities
         public override void Complete(WorkflowItem workflowItem)
         {
             // No-op: this activity is fully automated.
+        }
+
+        // Case-insensitive, substring-based: "A", "A1", "B2", "C2", "D",
+        // "D1", "D2", "Grade-A", "  d  " all match. "E", "F2", "G", "H" don't.
+        private static bool IsSenior(string g)
+        {
+            if (string.IsNullOrWhiteSpace(g)) return false;
+            string up = g.ToUpperInvariant();
+            foreach (var s in SeniorGrades) if (up.Contains(s)) return true;
+            return false;
+        }
+
+        // Normalize-then-match for exception positions. Strips every
+        // non-alphanumeric character (spaces, dashes, dots, parentheses)
+        // and lowercases the rest so input variations all collapse to the
+        // same canonical form before comparison.
+        private static bool IsExceptionPosition(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return false;
+            string norm = Normalize(title);
+            foreach (var x in ExceptionPositionsNormalized) if (x == norm) return true;
+            return false;
+        }
+
+        private static string Normalize(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (char c in s) if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+            return sb.ToString();
         }
 
         // ---------- helpers ----------
