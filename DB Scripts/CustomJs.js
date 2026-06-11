@@ -30,11 +30,10 @@ window.JDEAuthHeader = "Basic SkRFT1JDSDp1Y2pkZTEyMw==";   // JDEORCH:ucjde123
     var inFlight = 0;
     var maskName = "jde-loading-mask";
 
-    // Path-match instead of prefix-match: covers proxied URLs, template
-    // substitution edge-cases, and trailing-slash differences. Anything with
-    // "/jderest/orchestrator" in it is a JDE call.
     function isJdeUrl(u) {
-        return typeof u === 'string' && u.indexOf('/jderest/orchestrator') >= 0;
+        if (typeof u !== 'string') return false;
+        return u.indexOf('/jderest/orchestrator') >= 0 ||
+               u.indexOf('jdeproxy')              >= 0;
     }
 
     // ----- Self-contained CSS overlay (used when Common.mask isn't loaded) ---
@@ -301,11 +300,8 @@ function loadIsHRFromJDE(callback) {
 function attachJdeAutoBootstrap() {
     if (window.__jdeBootstrapWatcherInstalled) return;
     window.__jdeBootstrapWatcherInstalled = true;
-
-    // Match either a JDE URL reference (dropdown URL data source) OR one
-    // of the globals populated by the chain. The regex covers all
-    // window.Emp* readers without listing each suffix individually.
-    var BOOTSTRAP_NEEDLES = /\/jderest\/orchestrator|window\.JDEURL|window\.IsHR|window\.CurrentUserEmail|window\.Emp[A-Za-z]+/;
+  
+    var BOOTSTRAP_NEEDLES = /\/jderest\/orchestrator|jdeproxy|window\.JDEURL|window\.IsHR|window\.CurrentUserEmail|window\.Emp[A-Za-z]+/;
 
     var fired = false;
     function maybeFireFor(formInstance) {
