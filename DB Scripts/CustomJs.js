@@ -158,7 +158,8 @@ $(document).ready(function () {
         // Metadata view. So if either URL fires we know we're NOT in the
         // initiation case, and step-specific panels can be shown.
         if (settings.url.includes("Document/GetDocumentByTaskId") ||
-            settings.url.includes("Document/GetDocumentTasks")) {
+            settings.url.includes("Document/GetDocumentTasks") ||
+            settings.url.includes("Document/GetClosedDocument")) {
             window.IsExistingCaseView = true;
 
             // Push the flag into the form so any panel keyed to
@@ -170,7 +171,7 @@ $(document).ready(function () {
                     if (fld) fld.setValue(true);
                 });
             }
-        }
+        }   
 
     });
 
