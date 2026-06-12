@@ -64,6 +64,11 @@
       <HintPath>$(LibDir)\SkiaSharp.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <!-- Hangfire.Core is loaded REFLECTIVELY by ScheduleHrNotificationActivity
+         (the Designer's script compiler doesn't have Hangfire in its reference
+         set, so any compile-time using would make the script fail to compile).
+         Not referenced here — picked up by the lib\*.dll wildcard below so it
+         still ends up next to the executable for runtime resolution. -->
   </ItemGroup>
 
   <!-- Two-part display vs. output decoupling for the bundled libs:
