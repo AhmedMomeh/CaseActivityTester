@@ -122,6 +122,7 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Case Code Activity Classes\Finance\LPO Invoice\" />
+    <Folder Include="Case Code Activity Classes\Investment\Temporary Cash Payment\" />
   </ItemGroup>
 
 </Project>
