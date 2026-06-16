@@ -25,6 +25,18 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <!-- The sibling Shared.Activities\ subfolder is its own .csproj that
+       compiles the activity tree into a fixed-name Shared.Activities.dll
+       (see Shared.Activities\README.md). The SDK's default Compile glob
+       would otherwise grab Shared.Activities\obj\…\AssemblyInfo.cs and
+       cause "Duplicate AssemblyProductAttribute" on rebuild. Same for
+       None / EmbeddedResource. -->
+  <ItemGroup>
+    <Compile          Remove="Shared.Activities\**" />
+    <None             Remove="Shared.Activities\**" />
+    <EmbeddedResource Remove="Shared.Activities\**" />
+  </ItemGroup>
+
   <!-- Bundled assemblies — referenced for compile AND copied to the output folder
        so the resulting bin\ folder is fully portable. -->
   <ItemGroup>

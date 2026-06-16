@@ -1,0 +1,104 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ============================================================
+       Builds the Case code activities into a single named, on-disk
+       DLL (Shared.Activities.dll). The Portal can then load this
+       assembly by name from its bin folder and Hangfire's
+       Type.GetType / Assembly.Load can resolve every activity type
+       deterministically — replacing the Designer's in-memory script
+       assemblies whose names change on every recompile.
+
+       Source files live in the sibling ../Case Code Activity Classes
+       tree. The wildcard below pulls them in without copying or
+       duplicating sources. The legacy "Not used" folder is excluded.
+
+       Output assembly name and root namespace are LOCKED to
+       Shared.Activities so the Scheduler.Hash Job field can use:
+         {"t":"Shared.Activities.<TypeName>, Shared.Activities","m":"<Method>"}
+       …and the name will not drift across rebuilds.
+       ============================================================ -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Shared.Activities</AssemblyName>
+    <RootNamespace>Shared.Activities</RootNamespace>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <!-- We're a class library — don't drag NuGet runtime closures along.
+         The Portal already ships every dependency the activities use. -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+
+    <!-- Disable SDK auto-include — every source file is enumerated
+         explicitly below. Without this, the SDK would try to compile any
+         stray .cs in this directory tree (there are none today, but the
+         flag keeps the contract clear). -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+    <!-- Paths relative to this csproj. -->
+    <LibDir>$(MSBuildThisFileDirectory)..\lib</LibDir>
+    <ActivitiesDir>$(MSBuildThisFileDirectory)..\Case Code Activity Classes</ActivitiesDir>
+  </PropertyGroup>
+
+  <!-- The activities use ASP.NET Core types transitively (logging, config
+       extensions). The shared framework supplies those at compile-time;
+       the Portal supplies them at runtime. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!-- Portal-side DLLs — pulled from the local lib\ bundle for compile,
+       NOT copied into our output (the Portal already has them in bin\).
+       Private=false makes that policy explicit. -->
+  <ItemGroup>
+    <Reference Include="Intalio.Case.Core">
+      <HintPath>$(LibDir)\Intalio.Case.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Intalio.Case.Portal.Core">
+      <HintPath>$(LibDir)\Intalio.Case.Portal.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Intalio.Core">
+      <HintPath>$(LibDir)\Intalio.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(LibDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Data.SqlClient">
+      <HintPath>$(LibDir)\runtimes\win\lib\net6.0\Microsoft.Data.SqlClient.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Aspose.PDF">
+      <HintPath>$(LibDir)\Aspose.PDF.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Aspose.Words">
+      <HintPath>$(LibDir)\Aspose.Words.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Aspose.Words has a SetImage(SKBitmap) overload — the compiler
+         needs SkiaSharp to resolve overloads. -->
+    <Reference Include="SkiaSharp">
+      <HintPath>$(LibDir)\SkiaSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Source compile set. Pulls every .cs under the sibling
+       "Case Code Activity Classes" folder, EXCLUDING the legacy
+       "Not used" sub-folder which contains stale activities kept
+       for reference only.
+       Link controls how each file appears in Solution Explorer — we
+       group them under "Case Code Activity Classes\<RecursiveDir>"
+       so the virtual tree mirrors disk layout. -->
+  <ItemGroup>
+    <Compile Include="$(ActivitiesDir)\**\*.cs" Exclude="$(ActivitiesDir)\Not used\**\*.cs">
+      <Link>Case Code Activity Classes\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Compile>
+  </ItemGroup>
+
+</Project>

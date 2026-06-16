@@ -17,11 +17,16 @@ namespace Shared.Activities
 {
     /// <summary>
     /// Schedules a delayed HR reminder for the "Submit Original Invoices"
-    /// task on Temporary Cash Payment cases. Inserts a row into
-    /// dbo.CasePendingNotifications with Status='pending' and
-    /// FireAt = now + delayDays. A separately registered drainer (Hangfire
-    /// recurring job or SQL Agent job) polls the table, sends email to HR
-    /// for rows whose task is still open, and marks them sent.
+    /// task on Temporary Cash Payment cases. On Execute, inserts a row into
+    /// dbo.CasePendingNotifications with Status='pending' and FireAt = now
+    /// + delayDays, then opportunistically drains any rows whose FireAt has
+    /// already passed (sends email to HR if the matching task is still open).
+    ///
+    /// The opportunistic drain only fires when a workflow runs Execute, so
+    /// on quiet days due rows may sit until the next workflow execution.
+    /// For prompt firing, register a Scheduler.Job entry that periodically
+    /// re-runs this activity (any document) or directly executes the same
+    /// claim/email logic via a stored procedure.
     /// </summary>
     public class ScheduleHrNotificationActivity : ActivityTemplate
     {
@@ -31,10 +36,21 @@ namespace Shared.Activities
 
         public override void Complete(WorkflowItem workflowItem) { }
 
+        // Parameterless public static entry for Intalio's Scheduler to call
+        // on the cron registered in Scheduler.Hash. Wraps the private
+        // DrainDueRows so Scheduler.Job's InvocationData target can be:
+        //   {"t":"Shared.Activities.ScheduleHrNotificationActivity, <asm>","m":"Drain"}
+        // Designer accepts a parameterless public static — verified.
+        public static void Drain() { DrainDueRows(); }
+
         public override void Execute(WorkflowItem workflowItem)
         {
             string docIdStr = GetProp(workflowItem, "DocumentId");
-            LogInfo("---- BEGIN  DocumentId=" + docIdStr + " ----");
+            // Log the assembly's SIMPLE name (Intalio's Scheduler.Hash 'Job'
+            // field uses {"t":"FullTypeName, SimpleAssemblyName","m":"..."}).
+            // Copy this exact string into register_scheduler_drainer.sql.
+            string asm = typeof(ScheduleHrNotificationActivity).Assembly.GetName().Name;
+            LogInfo("---- BEGIN  DocumentId=" + docIdStr + "  assembly='" + asm + "' ----");
 
             long documentId;
             if (!long.TryParse(docIdStr, out documentId) || documentId <= 0)
