@@ -220,15 +220,25 @@ namespace Shared.Activities
             return s.ToUpperInvariant().Contains("CEO");
         }
 
-        // Normalize-then-match for exception positions. Strips every
-        // non-alphanumeric character (spaces, dashes, dots, parentheses)
-        // and lowercases the rest so input variations all collapse to the
-        // same canonical form before comparison.
+        // Normalize-then-Contains match for exception positions. Strips every
+        // non-alphanumeric character (spaces, dashes, dots, parentheses) and
+        // lowercases the rest so input variations all collapse to the same
+        // canonical form, then checks whether the canonical form CONTAINS any
+        // of the canonical exception patterns. Contains (vs. equality) means
+        // common prefix/suffix variations also match:
+        //   "Vice President - Internal Audit"           -> matches "vicepresidentinternalaudit"
+        //   "Acting Vice President - Internal Audit"    -> matches "vicepresidentinternalaudit"  (prefix)
+        //   "VP - Internal Audit Department"            -> matches "vpinternalaudit"             (suffix)
+        //   "Deputy Board Office Manager"               -> matches "boardofficemanager"          (prefix)
+        //   "Senior CEO" / "Acting CEO" / "CEO Office"  -> match  "ceo"                          (any-position)
+        // All routes through this list lead to the same downstream route (CPCO+CEO
+        // / BoD / Board), so an early "ceo" match short-circuiting a more specific
+        // entry is harmless.
         private static bool IsExceptionPosition(string title)
         {
             if (string.IsNullOrWhiteSpace(title)) return false;
             string norm = Normalize(title);
-            foreach (var x in ExceptionPositionsNormalized) if (x == norm) return true;
+            foreach (var x in ExceptionPositionsNormalized) if (norm.Contains(x)) return true;
             return false;
         }
 
