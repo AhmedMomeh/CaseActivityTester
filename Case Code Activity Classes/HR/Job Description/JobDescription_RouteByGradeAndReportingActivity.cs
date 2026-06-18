@@ -1,9 +1,11 @@
 using Intalio.Case.Core.Objects;
 using Intalio.Case.Core.Templates;
 using Intalio.Case.Portal.Core.DAL;
+using Intalio.Core.DAL;
 using System;
 using System.Globalization;
 using System.IO;
+using System.Runtime.ConstrainedExecution;
 using System.Threading;
 
 namespace Shared.Activities
@@ -126,6 +128,9 @@ namespace Shared.Activities
             "vpinternalaudit",
             "boardofficemanager",
             "managerboardoffice",
+            "managerceooffice",
+            "vicepresidentinternalaudit",
+            "n1leadership"
         };
 
         private const string RouteCPCOOnly     = "CPCOOnly";
@@ -146,9 +151,11 @@ namespace Shared.Activities
             {
                 string jobTitleText = GetProp(workflowItem, "jobTitleText");
                 string grade  = GetProp(workflowItem, "gradeLevelText");
+                string reportingToText = GetProp(workflowItem, "reportingToText");
                 bool   isDirectReportee = ParseBool(GetProp(workflowItem, "isDirectReporteeToCEO"));
+                bool   reportingToCeo   = ContainsCeo(reportingToText);
 
-                LogInfo($"Input: jobTitle='{jobTitleText}', gradeLevel='{grade}', isDirectReporteeToCEO={isDirectReportee}");
+                LogInfo($"Input: jobTitle='{jobTitleText}', gradeLevel='{grade}', reportingTo='{reportingToText}', isDirectReporteeToCEO={isDirectReportee}, reportingToCeo={reportingToCeo}");
 
                 string nextApprovalRoute;
                 if (IsExceptionPosition(jobTitleText))
@@ -159,9 +166,9 @@ namespace Shared.Activities
                     nextApprovalRoute = RouteCPCOAndCEO;
                     LogInfo($"Exception position '{jobTitleText}' matched → routing via CPCO+CEO.");
                 }
-                else if (isDirectReportee)
+                else if (isDirectReportee || reportingToCeo)
                 {                   
-                    nextApprovalRoute =  RouteCPCOAndCEO;
+                    nextApprovalRoute = RouteCPCOAndCEO;
                 }
                 else if (IsSenior(grade))
                 {
@@ -202,6 +209,15 @@ namespace Shared.Activities
             string up = g.ToUpperInvariant();
             foreach (var s in SeniorGrades) if (up.Contains(s)) return true;
             return false;
+        }
+
+        // Case-insensitive substring check for "CEO" anywhere in a free-text
+        // reporting-to value. Matches "CEO", "Ceo", "ceo", "CEO Office",
+        // "Reports to CEO directly", "Deputy of the CEO", etc.
+        private static bool ContainsCeo(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            return s.ToUpperInvariant().Contains("CEO");
         }
 
         // Normalize-then-match for exception positions. Strips every

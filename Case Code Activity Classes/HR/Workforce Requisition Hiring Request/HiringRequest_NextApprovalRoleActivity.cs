@@ -98,7 +98,9 @@ namespace Shared.Activities
             "vpinternalaudit",
             "boardofficemanager",
             "managerboardoffice",
-            "n1leadership",
+            "managerceooffice",
+            "vicepresidentinternalaudit",
+            "n1leadership"
         };
 
         private const string RouteBoardApproval = "BoardApproval";

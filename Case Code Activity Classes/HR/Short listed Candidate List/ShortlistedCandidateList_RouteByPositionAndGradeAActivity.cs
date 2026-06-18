@@ -98,9 +98,15 @@ namespace Shared.Activities
 
 
         private static readonly string[] SeniorGrades = { "A", "B", "C", "D" };
-        private static readonly string[] ExceptionPositions =
+        private static readonly string[] ExceptionPositionsNormalized =
         {
-              "CEO", "VPInternalAudit", "BoardOfficeManager", "N1Leadership"
+            "ceo",
+            "vpinternalaudit",
+            "boardofficemanager",
+            "managerboardoffice",
+            "managerceooffice",
+            "vicepresidentinternalaudit",
+            "n1leadership"
         };
 
         public override void Execute(WorkflowItem workflowItem)
@@ -155,7 +161,7 @@ namespace Shared.Activities
         {
             if (string.IsNullOrWhiteSpace(p)) return false;
             string norm = p.Trim();
-            foreach (var x in ExceptionPositions)
+            foreach (var x in ExceptionPositionsNormalized)
                 if (string.Equals(x, norm, StringComparison.OrdinalIgnoreCase)) return true;
             return false;
         }
