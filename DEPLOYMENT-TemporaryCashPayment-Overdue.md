@@ -22,6 +22,7 @@ Feature flow:
 |---|---|
 | `Case Code Activity Classes/Investment/Temporary Cash Payment/ScheduleHrNotificationActivity.cs` | New activity: insert pending row + opportunistic drain + parameterless `Drain` static for the Scheduler to invoke. |
 | `Shared.Activities/Shared.Activities.csproj` | New class-library project — builds the activity tree into a fixed-name `Shared.Activities.dll`. |
+| `Shared.Activities/deploy-Shared.Activities.ps1` | **Idempotent PowerShell deploy script** — handles bin copy + deps.json patch + app-pool recycle. Re-run after every Portal upgrade. |
 | `Shared.Activities/README.md` | Build + deploy reference. |
 | `ActivityTester.csproj` | Add `<Compile Remove="Shared.Activities\**" />` + matching `None` / `EmbeddedResource` removes (prevents duplicate-AssemblyAttribute error on solution rebuild). |
 | `DB Scripts/insert_template.sql` | Appended idempotent upsert for the `OnTemporaryCashInvoiceOverdue` template. |
@@ -59,34 +60,48 @@ The DLL is small (~155 KB). It references Portal-side DLLs (`Intalio.Case.Core`,
 `<Private>false</Private>` so it doesn't bundle them — the Portal already
 ships them in its bin folder.
 
-## 4. Deploy to the Portal bin folder
+## 4. Deploy to the Portal bin folder + patch deps.json
 
-Repeat on every Case Portal node.
+**Use the included script — `Shared.Activities/deploy-Shared.Activities.ps1`.**
+It's idempotent (safe to re-run) and consolidates the four manual steps
+(stop app pool → backup deps.json → patch deps.json → copy DLL → start
+app pool) into one command. Designed to be the deploy team's single
+post-upgrade command.
 
-```powershell
-# 1) Stop the app pool so bin\ is writable
-Import-Module WebAdministration
-Stop-WebAppPool UC_CasePortal                          # ← use the prod app-pool name if different
+Bundle to ship to the deploy team:
 
-# 2) Drop the DLL in
-Copy-Item Shared.Activities\bin\Release\net8.0\Shared.Activities.dll `
-          "C:\Program Files\Intalio\UC_CasePortal\" -Force
+```
+deploy-Shared.Activities.ps1      ← from Shared.Activities/
+Shared.Activities.dll             ← from Shared.Activities/bin/Release/net8.0/
 ```
 
-## 5. Patch `Intalio.Case.Portal.deps.json` on the Portal
-
-.NET 8's `AssemblyLoadContext` only loads what `<app>.deps.json` lists. Just
-dropping the DLL into the bin folder is NOT enough — `Assembly.Load("Shared.Activities")`
-will fail with `FileNotFoundException`.
-
-**Back up first**, then add two entries:
+On the target Portal machine, drop both files into the same folder and
+run **elevated PowerShell**:
 
 ```powershell
-Copy-Item "C:\Program Files\Intalio\UC_CasePortal\Intalio.Case.Portal.deps.json" `
-          "C:\Program Files\Intalio\UC_CasePortal\Intalio.Case.Portal.deps.json.bak" -Force
+.\deploy-Shared.Activities.ps1
 ```
 
-### In `targets[".NETCoreApp,Version=v8.0"]`, after the `"Intalio.Case.Portal.Core/9.3.0"` entry
+Override parameters if the prod install differs from the defaults:
+
+```powershell
+.\deploy-Shared.Activities.ps1 `
+    -PortalPath  "D:\Apps\CasePortal" `
+    -DllPath     ".\Shared.Activities.dll" `
+    -AppPoolName "Intalio.Case"
+```
+
+The script auto-detects the Intalio.Case.Portal.Core version from the
+existing deps.json, so it keeps working when Intalio bumps the Portal
+version (e.g. 9.3 → 9.4). If a future Portal release restructures
+deps.json sections, the script auto-rolls back the deps.json edit and
+exits with an error — original file is preserved via timestamped `.bak`.
+
+### What it does internally (for reference)
+
+1. Stop app pool.
+2. Back up `Intalio.Case.Portal.deps.json` → `Intalio.Case.Portal.deps.json.bak-<timestamp>`.
+3. Insert `"Shared.Activities/1.0.0.0"` into the `targets[".NETCoreApp,Version=v8.0"]` block:
 
 ```json
 "Shared.Activities/1.0.0.0": {
@@ -99,7 +114,7 @@ Copy-Item "C:\Program Files\Intalio\UC_CasePortal\Intalio.Case.Portal.deps.json"
 },
 ```
 
-### In `libraries`, after the `"Intalio.Case.Portal.Core/9.3.0"` entry
+4. Insert `"Shared.Activities/1.0.0.0"` into the `libraries` block:
 
 ```json
 "Shared.Activities/1.0.0.0": {
@@ -109,19 +124,11 @@ Copy-Item "C:\Program Files\Intalio\UC_CasePortal\Intalio.Case.Portal.deps.json"
 },
 ```
 
-### Validate before restarting
+5. Validate JSON; auto-rollback if broken.
+6. Copy `Shared.Activities.dll` into the Portal bin folder.
+7. Start app pool, wait for `Started` state.
 
-```powershell
-$j = Get-Content "C:\Program Files\Intalio\UC_CasePortal\Intalio.Case.Portal.deps.json" -Raw | ConvertFrom-Json
-[bool]$j.targets.'.NETCoreApp,Version=v8.0'.'Shared.Activities/1.0.0.0'   # → True
-[bool]$j.libraries.'Shared.Activities/1.0.0.0'                            # → True
-```
-
-### Start the app pool
-
-```powershell
-Start-WebAppPool UC_CasePortal
-```
+## 5. (Skipped — handled by step 4)
 
 ## 6. Database
 
@@ -267,7 +274,13 @@ you should see:
   Hangfire's worker dies because IIS retires the idle app pool. Step 8 is
   mandatory for a self-sustaining drain.
 - **Future activity edits.** When you change a `.cs` file under
-  `Case Code Activity Classes\`, rebuild Shared.Activities.dll, stop the app
-  pool, copy the new DLL over the old one, start the app pool. The
-  Scheduler registration stays valid because the assembly name doesn't drift.
-  `deps.json` only needs patching once (on the very first deploy).
+  `Case Code Activity Classes\`, rebuild Shared.Activities.dll and re-run
+  `deploy-Shared.Activities.ps1`. The Scheduler registration stays valid
+  because the assembly name doesn't drift.
+- **Portal upgrades wipe the patch.** A Case Portal installer overwrites
+  `C:\Program Files\Intalio\UC_CasePortal\` entirely, deleting both
+  `Shared.Activities.dll` and the `deps.json` patch. **Mandatory
+  post-upgrade step: re-run `deploy-Shared.Activities.ps1`** (it's
+  idempotent — safe even if you accidentally run it twice). Make this
+  part of the documented Portal upgrade SOP so the deploy team can't
+  forget it.
