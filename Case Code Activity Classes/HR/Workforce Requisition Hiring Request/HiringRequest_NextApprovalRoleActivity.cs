@@ -95,6 +95,7 @@ namespace Shared.Activities
         private static readonly string[] ExceptionPositionsNormalized =
         {
             "ceo",
+            "chiefexecutiveofficer",
             "vpinternalaudit",
             "boardofficemanager",
             "managerboardoffice",

@@ -125,6 +125,7 @@ namespace Shared.Activities
         private static readonly string[] ExceptionPositionsNormalized =
         {
             "ceo",
+            "chiefexecutiveofficer",
             "vpinternalaudit",
             "boardofficemanager",
             "managerboardoffice",
@@ -153,7 +154,7 @@ namespace Shared.Activities
                 string grade  = GetProp(workflowItem, "gradeLevelText");
                 string reportingToText = GetProp(workflowItem, "reportingToText");
                 bool   isDirectReportee = ParseBool(GetProp(workflowItem, "isDirectReporteeToCEO"));
-                bool   reportingToCeo   = ContainsCeo(reportingToText);
+                bool   reportingToCeo   = IsReportingToCeo(reportingToText);
 
                 LogInfo($"Input: jobTitle='{jobTitleText}', gradeLevel='{grade}', reportingTo='{reportingToText}', isDirectReporteeToCEO={isDirectReportee}, reportingToCeo={reportingToCeo}");
 
@@ -214,10 +215,15 @@ namespace Shared.Activities
         // Case-insensitive substring check for "CEO" anywhere in a free-text
         // reporting-to value. Matches "CEO", "Ceo", "ceo", "CEO Office",
         // "Reports to CEO directly", "Deputy of the CEO", etc.
-        private static bool ContainsCeo(string s)
+        private static bool IsReportingToCeo(string s)
         {
-            if (string.IsNullOrWhiteSpace(s)) return false;
-            return s.ToUpperInvariant().Contains("CEO");
+            if (string.IsNullOrWhiteSpace(s))
+                return false;
+
+            s = s.Trim();
+
+            return string.Equals(s, "CEO", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(s, "Chief Executive Officer", StringComparison.OrdinalIgnoreCase);
         }
 
         // Normalize-then-EXACT-match for exception positions. Strips every
