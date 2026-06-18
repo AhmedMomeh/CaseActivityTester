@@ -159,6 +159,10 @@ namespace Shared.Activities
                     nextApprovalRoute = RouteCPCOAndCEO;
                     LogInfo($"Exception position '{jobTitleText}' matched → routing via CPCO+CEO.");
                 }
+                else if (isDirectReportee)
+                {                   
+                    nextApprovalRoute =  RouteCPCOAndCEO;
+                }
                 else if (IsSenior(grade))
                 {
                     // Grades A-D (incl. A1, B2, C2, D1, …) — always CPCO
