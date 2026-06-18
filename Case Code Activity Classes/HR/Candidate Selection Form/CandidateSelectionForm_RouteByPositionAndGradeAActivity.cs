@@ -193,25 +193,36 @@ namespace Shared.Activities
             return false;
         }
 
-        // Normalize-then-Contains match for exception positions. Strips every
+        // Normalize-then-EXACT-match for exception positions. Strips every
         // non-alphanumeric character (spaces, dashes, dots, parentheses) and
         // lowercases the rest so input variations all collapse to the same
-        // canonical form, then checks whether the canonical form CONTAINS any
-        // of the canonical exception patterns. Contains (vs. equality) means
-        // common prefix/suffix variations also match:
-        //   "Vice President - Internal Audit"           -> matches "vicepresidentinternalaudit"
-        //   "Acting Vice President - Internal Audit"    -> matches "vicepresidentinternalaudit"  (prefix)
-        //   "VP - Internal Audit Department"            -> matches "vpinternalaudit"             (suffix)
-        //   "Deputy Board Office Manager"               -> matches "boardofficemanager"          (prefix)
-        //   "Senior CEO" / "Acting CEO" / "CEO Office"  -> match  "ceo"                          (any-position)
-        // All routes through this list lead to the same downstream route (BoD),
-        // so an early "ceo" match short-circuiting a more specific entry is
-        // harmless.
+        // canonical form, then checks whether that canonical form is EXACTLY
+        // one of the canonical exception patterns.
+        //
+        // Equality (vs. Contains) is intentional: many ordinary titles contain
+        // these substrings ("CEO Office Coordinator", "Acting VP Internal Audit
+        // Deputy", "Junior Board Office Manager Assistant", etc.) that should
+        // NOT escalate to BoD. Matching only on the exact canonical form means
+        // new exception titles must be added explicitly to the list - safer
+        // than over-broad matching.
+        //
+        // Variants that DO match the existing list (since normalization collapses
+        // spaces/dashes/dots/casing):
+        //   "CEO" / "C.E.O." / "ceo"                       -> "ceo"
+        //   "VP-Internal Audit" / "VP Internal Audit"      -> "vpinternalaudit"
+        //   "Vice President - Internal Audit"              -> "vicepresidentinternalaudit"
+        //   "Board Office Manager" / "BoardOfficeManager"  -> "boardofficemanager"
+        //   "Manager - Board Office" / "ManagerBoardOffice"-> "managerboardoffice"
+        //   "Manager - CEO Office"                         -> "managerceooffice"
+        //   "N-1 Leadership" / "N1Leadership"              -> "n1leadership"
+        // Add new title variants to ExceptionPositionsNormalized above (in
+        // canonical form) when business confirms they belong to the exception
+        // route.
         private static bool IsExceptionPosition(string title)
         {
             if (string.IsNullOrWhiteSpace(title)) return false;
             string norm = Normalize(title);
-            foreach (var x in ExceptionPositionsNormalized) if (norm.Contains(x)) return true;
+            foreach (var x in ExceptionPositionsNormalized) if (x == norm) return true;
             return false;
         }
 
