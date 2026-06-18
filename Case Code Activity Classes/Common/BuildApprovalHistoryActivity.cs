@@ -191,7 +191,22 @@ namespace Shared.Activities
         }
 
         // ---------------------------------------------------------------------
-        // Approval data loader — single SQL query, returns only Approve transitions.
+        // Approval data loader — returns one row per approver (the user's LAST
+        // Approve transition), ordered chronologically.
+        //
+        // Why dedup: when the workflow loops (a later approver rejects and the
+        // case goes back to an earlier step), the same user can approve the
+        // same step 2+ times. The old query emitted every Approve row, so the
+        // history table would show e.g. "Manager A | 2026-06-10" and then
+        // "Manager A | 2026-06-14" again. Business wants one row per approver
+        // with their FINAL approval date.
+        //
+        // The CTE X gathers every closed task + the workflow's "next activity"
+        // so we can match it to a Transition. The CTE A filters to Approve
+        // transitions and ranks each user's approvals by ClosedDate DESC, so
+        // rn=1 is the user's LATEST approval. The final SELECT keeps only
+        // rn=1 and ORDERS BY ClosedDate ASC so the table reads top-to-bottom
+        // in real-time order: first approver, second approver, then next.
         // ---------------------------------------------------------------------
         private static List<Approval> LoadApprovals(long documentId)
         {
@@ -216,12 +231,17 @@ WITH X AS (
     JOIN   ActivityInstances curr_ai ON curr_ai.ActivityInstanceId = t.ActivityInstanceId
     WHERE  t.DocumentId  = @docId
       AND  t.ClosedDate  IS NOT NULL
-      AND  t.OwnerUserId IS NOT NULL)
-SELECT X.UserId, X.ClosedDate, X.StructureId, tr.Name
-FROM   X
-LEFT   JOIN Transitions tr ON tr.CurrentActivityId = X.FromActId AND tr.NextActivityId = X.ToActId
-WHERE  tr.Name = 'Approve'
-ORDER  BY X.ClosedDate;";
+      AND  t.OwnerUserId IS NOT NULL),
+A AS (
+    SELECT X.UserId, X.ClosedDate, X.StructureId,
+           ROW_NUMBER() OVER (PARTITION BY X.UserId ORDER BY X.ClosedDate DESC) AS rn
+    FROM   X
+    JOIN   Transitions tr ON tr.CurrentActivityId = X.FromActId AND tr.NextActivityId = X.ToActId
+    WHERE  tr.Name = 'Approve')
+SELECT A.UserId, A.ClosedDate, A.StructureId
+FROM   A
+WHERE  A.rn = 1
+ORDER  BY A.ClosedDate;";
 
             using (var c = new SqlConnection(conn))
             {
