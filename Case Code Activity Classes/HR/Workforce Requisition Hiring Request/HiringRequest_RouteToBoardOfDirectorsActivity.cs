@@ -8,32 +8,19 @@ using System.Threading;
 namespace Shared.Activities
 {
     /// <summary>
-    /// Routes a Workforce Requisition Hiring Request to its next approver
-    /// purely by position group (job title + reports-to). Replaces the old
-    /// HiringRequest_NextApprovalRoleActivity, which also factored in budget
-    /// and grade - those concerns now live in HiringRequest_RouteByBudgetActivity.
+    /// Routes a Workforce Requisition Hiring Request to the Board of Directors
+    /// step when either of two signals applies, otherwise archives to DMS.
     ///
-    /// Position groups + their downstream route (checked in this order):
-    ///
-    ///   1.  Reports to CEO  OR  job title in {Board Office Manager / Manager - Board Office}
-    ///         -> nextApprovalRoute = "CEO"
-    ///   2.  Job title in {VP - Internal Audit / Vice President - Internal Audit}
-    ///         -> nextApprovalRoute = "AC"            (Audit Committee)
-    ///   3.  Job title in {CEO / Chief Executive Officer}
-    ///         -> nextApprovalRoute = "NRC"           (Nomination & Remuneration Committee)
-    ///   4.  Anything else
-    ///         -> nextApprovalRoute = "ArchiveToDMS"  (no further committee step)
-    ///
-    /// The first matching rule wins, so a VP Internal Audit who reports to
-    /// the CEO routes through CEO (rule 1), not AC (rule 2). That's
-    /// intentional: reporting-to-CEO is the stronger signal.
+    /// Rules (OR - either signal is enough):
+    ///   reportingToText contains "CEO" (any casing)            -> "BoardOfDirectors"
+    ///   IsExceptionPosition(jobTitleText)                      -> "BoardOfDirectors"
+    ///   neither signal applies                                 -> "ArchiveToDMS"
     ///
     /// Title matching uses the same canonical normalization as the other HR
-    /// routing activities (lowercase + strip every non-alphanumeric char) so
-    /// "VP-Internal Audit", "VP Internal Audit", "vp.internal.audit" all
-    /// collapse to "vpinternalaudit" and match. The reporting-to test is a
-    /// case-insensitive substring check for "CEO" inside the free-text
-    /// reportingToText.
+    /// routing activities (lowercase + strip every non-alphanumeric char), with
+    /// EXACT equality on the normalized form against ExceptionPositionsNormalized.
+    /// Reports-to matching is a case-insensitive substring check for "CEO" inside
+    /// the free-text reportingToText field.
     ///
     /// Input  (WorkflowItem.Properties):
     ///   - DocumentId       : long
@@ -41,9 +28,9 @@ namespace Shared.Activities
     ///   - reportingToText  : string  free-text "Reports To"
     ///
     /// Output (WorkflowItem.Properties):
-    ///   - nextApprovalRoute : "CEO" | "AC" | "NRC" | "ArchiveToDMS"
+    ///   - nextApprovalRoute : "BoardOfDirectors" | "ArchiveToDMS"
     /// </summary>
-    public class HiringRequest_BudgetRouteByPositionActivity : ActivityTemplate
+    public class HiringRequest_RouteToBoardOfDirectorsActivity : ActivityTemplate
     {
         private static readonly string LogDirectory = CodeActivityConfig.Get("CaseActivities:LogDirectory");
 
@@ -103,42 +90,29 @@ namespace Shared.Activities
 
         private static readonly object LogLock = new object();
 
-        // Position groups - each one a list of canonical normalized titles
-        // (lowercased, every non-alphanumeric char stripped). Matched with EXACT
-        // equality on the normalized form, not Contains, so an incidental
-        // substring like "CEO" inside "CEO Office Coordinator" does NOT
-        // escalate. New title variants must be added to the relevant group.
-
-        // Rule 1 -> CEO route (also triggered by reportingToCeo)
-        private static readonly string[] BoardOfficeManagerGroup =
-        {
-            "boardofficemanager",
-            "managerboardoffice",
-        };
-
-        // Rule 2 -> AC (Audit Committee) route
-        private static readonly string[] VPInternalAuditGroup =
-        {
-            "vpinternalaudit",
-            "vicepresidentinternalaudit",
-        };
-
-        // Rule 3 -> NRC (Nomination & Remuneration Committee) route
-        private static readonly string[] CEOTitleGroup =
+        // Exception positions - when the normalized job title matches any of
+        // these EXACTLY, the request escalates to Board of Directors. Kept in
+        // sync with the other HR routing activities. New title variants must be
+        // added explicitly (canonical form: lowercase + strip non-alphanumeric).
+        private static readonly string[] ExceptionPositionsNormalized =
         {
             "ceo",
             "chiefexecutiveofficer",
+            "vpinternalaudit",
+            "boardofficemanager",
+            "managerboardoffice",
+            "managerceooffice",
+            "vicepresidentinternalaudit",
+            "n1leadership"
         };
 
-        private const string RouteCEO          = "CEO";
-        private const string RouteAC           = "AC";
-        private const string RouteNRC          = "NRC";
-        private const string RouteArchiveToDMS = "ArchiveToDMS";
+        private const string RouteBoardOfDirectors = "BoardOfDirectors";
+        private const string RouteArchiveToDMS     = "ArchiveToDMS";
 
         public override void Execute(WorkflowItem workflowItem)
         {
             string documentIdStr = GetProp(workflowItem, "DocumentId");
-            LogInfo($"---- HiringRequest_BudgetRouteByPositionActivity BEGIN  DocumentId={documentIdStr} ----");
+            LogInfo($"---- HiringRequest_RouteToBoardOfDirectorsActivity BEGIN  DocumentId={documentIdStr} ----");
             if (!long.TryParse(documentIdStr, out long documentId) || documentId <= 0)
             {
                 LogError($"Invalid DocumentId: '{documentIdStr}'");
@@ -150,56 +124,55 @@ namespace Shared.Activities
                 string jobTitleText    = GetProp(workflowItem, "jobTitleText");
                 string reportingToText = GetProp(workflowItem, "reportingToText");
 
-                string norm           = Normalize(jobTitleText);
-                bool   reportingToCeo = IsReportingToCeo(reportingToText);
+                bool reportingToCeo = IsReportingToCeo(reportingToText);
+                bool isException   = IsExceptionPosition(jobTitleText);
 
-                LogInfo($"Input: jobTitle='{jobTitleText}', reportingTo='{reportingToText}', reportingToCeo={reportingToCeo}, normalizedTitle='{norm}'");
+                LogInfo($"Input: jobTitle='{jobTitleText}', reportingTo='{reportingToText}', reportingToCeo={reportingToCeo}, isException={isException}");
 
                 string nextApprovalRoute;
-                if (reportingToCeo || IsInGroup(norm, BoardOfficeManagerGroup))
+                if (reportingToCeo || isException)
                 {
-                    // Reports to CEO OR Board Office Manager / Manager - Board Office
-                    nextApprovalRoute = RouteCEO;
-                    LogInfo($"Matched CEO route ({(reportingToCeo ? "reportingToCeo" : "title='" + jobTitleText + "'")}) -> {RouteCEO}.");
-                }
-                else if (IsInGroup(norm, VPInternalAuditGroup))
-                {
-                    // VP - Internal Audit / Vice President - Internal Audit
-                    nextApprovalRoute = RouteAC;
-                    LogInfo($"Matched AC route (title='{jobTitleText}') -> {RouteAC}.");
-                }
-                else if (IsInGroup(norm, CEOTitleGroup))
-                {
-                    // CEO / Chief Executive Officer (the position itself, not the reportee)
-                    nextApprovalRoute = RouteNRC;
-                    LogInfo($"Matched NRC route (title='{jobTitleText}') -> {RouteNRC}.");
+                    // Either signal alone triggers the Board of Directors step.
+                    nextApprovalRoute = RouteBoardOfDirectors;
+                    string reason = reportingToCeo && isException
+                        ? "reportingToCeo + exception position"
+                        : reportingToCeo
+                            ? "reportingToCeo"
+                            : "exception position '" + jobTitleText + "'";
+                    LogInfo($"Matched BoD route ({reason}) -> {RouteBoardOfDirectors}.");
                 }
                 else
                 {
-                    // None of the committee/CEO escalation rules apply - terminal.
                     nextApprovalRoute = RouteArchiveToDMS;
-                    LogWarn($"No position-group match for title='{jobTitleText}' (normalized='{norm}') - defaulting to {RouteArchiveToDMS}.");
                 }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
 
-                LogInfo($"---- HiringRequest_BudgetRouteByPositionActivity nextApprovalRoute={nextApprovalRoute} ");
-                LogInfo($"---- HiringRequest_BudgetRouteByPositionActivity END    DocumentId={documentId}  result=success ----");
+                LogInfo($"---- HiringRequest_RouteToBoardOfDirectorsActivity nextApprovalRoute={nextApprovalRoute} ");
+                LogInfo($"---- HiringRequest_RouteToBoardOfDirectorsActivity END    DocumentId={documentId}  result=success ----");
             }
             catch (Exception ex)
             {
                 LogException("Execute() failed", ex);
-                LogInfo($"---- HiringRequest_BudgetRouteByPositionActivity END    DocumentId={documentIdStr}  result=FAILED ----");
+                LogInfo($"---- HiringRequest_RouteToBoardOfDirectorsActivity END    DocumentId={documentIdStr}  result=FAILED ----");
             }
         }
 
         public override void Complete(WorkflowItem workflowItem) { }
 
-        // Exact-equality membership test on a normalized title group.
-        private static bool IsInGroup(string normalizedTitle, string[] group)
+        // Normalize-then-EXACT-match for exception positions. Strips every
+        // non-alphanumeric character (spaces, dashes, dots, parentheses) and
+        // lowercases the rest so input variations all collapse to the same
+        // canonical form, then checks whether that canonical form is EXACTLY
+        // one of the canonical exception patterns. Equality (vs. Contains) is
+        // intentional - many ordinary titles contain these substrings ("CEO
+        // Office Coordinator", "Junior Board Office Manager Assistant", etc.)
+        // that should NOT escalate.
+        private static bool IsExceptionPosition(string title)
         {
-            if (string.IsNullOrEmpty(normalizedTitle)) return false;
-            foreach (var x in group) if (x == normalizedTitle) return true;
+            if (string.IsNullOrWhiteSpace(title)) return false;
+            string norm = Normalize(title);
+            foreach (var x in ExceptionPositionsNormalized) if (x == norm) return true;
             return false;
         }
 
@@ -217,11 +190,8 @@ namespace Shared.Activities
                 || string.Equals(s, "Chief Executive Officer", StringComparison.OrdinalIgnoreCase);
         }
 
-        // Normalize a title: lowercase + strip every non-alphanumeric char.
-        // "VP - Internal Audit" -> "vpinternalaudit"; "C.E.O." -> "ceo".
         private static string Normalize(string s)
         {
-            if (string.IsNullOrEmpty(s)) return "";
             var sb = new System.Text.StringBuilder(s.Length);
             foreach (char c in s) if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
             return sb.ToString();
@@ -257,7 +227,7 @@ namespace Shared.Activities
             try
             {
                 string path = Path.Combine(LogDirectory,
-                    "HiringRequest_BudgetRouteByPositionActivity-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
+                    "HiringRequest_RouteToBoardOfDirectorsActivity-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
                 string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + level
                             + "  [tid:" + Thread.CurrentThread.ManagedThreadId + "]  " + message + Environment.NewLine;
                 lock (LogLock)
