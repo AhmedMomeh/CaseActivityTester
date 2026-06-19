@@ -8,26 +8,45 @@ using System.Threading;
 namespace Shared.Activities
 {
     /// <summary>
-    /// Routes a Workforce Requisition Hiring Request based purely on whether
-    /// the position is budgeted or not.
+    /// Routes a Workforce Requisition Hiring Request based on budget status,
+    /// and within the budgeted branch, on whether the job title is one of the
+    /// exception positions (CEO / VP-Internal Audit / Board Office Manager etc.).
     ///
     /// Rules:
-    ///   budgetStatus = "budgeted"     -> nextApprovalRoute = "Budgeted"
-    ///   budgetStatus = "nonBudgeted"  -> nextApprovalRoute = "NonBudgeted"
-    ///   any other value (incl. empty) -> nextApprovalRoute = "NonBudgeted"  (safer default,
-    ///                                                                       same as missing budget)
+    ///   budgetStatus != "budgeted"
+    ///     -> nextApprovalRoute = "NonBudgeted"   (any non-empty non-budgeted
+    ///                                             value, plus the safe default
+    ///                                             for empty / unknown input)
+    ///   budgetStatus == "budgeted"  AND
+    ///     ( IsExceptionPosition(jobTitleText)
+    ///       OR reportingToText contains "CEO" (any casing) )
+    ///     -> nextApprovalRoute = "HRDirectorOrAssociateDirector"
+    ///   budgetStatus == "budgeted"  AND  neither signal
+    ///     -> nextApprovalRoute = "HODDepartmentHeadApproval"
     ///
     /// Input  (WorkflowItem.Properties):
-    ///   - DocumentId    : long
-    ///   - budgetStatus  : string  ("budgeted" | "nonBudgeted", case-insensitive)
+    ///   - DocumentId       : long
+    ///   - budgetStatus     : string  ("budgeted" | "nonBudgeted", case-insensitive)
+    ///   - jobTitleText     : string  free-text title; matched against the
+    ///                                 canonical ExceptionPositionsNormalized list
+    ///                                 using equality after stripping non-alphanumerics
+    ///                                 and lowercasing (same matcher used by the
+    ///                                 other HR routing activities).
+    ///   - reportingToText  : string  free-text "Reports To" value; case-insensitive
+    ///                                 substring check for "CEO" (matches "CEO",
+    ///                                 "Ceo", "CEO Office", "Reports to CEO
+    ///                                 directly", "Deputy of the CEO", etc.).
     ///
     /// Output (WorkflowItem.Properties):
-    ///   - nextApprovalRoute : "Budgeted" | "NonBudgeted"
+    ///   - nextApprovalRoute : "NonBudgeted"
+    ///                       | "HRDirectorOrAssociateDirector"
+    ///                       | "HODDepartmentHeadApproval"
     ///
     /// The output drives the gateway's outgoing transitions in the Workforce
     /// Requisition Hiring Request workflow:
-    ///   RouteByBudget -> Budgeted     -> ... (continues without extra approval)
-    ///   RouteByBudget -> NonBudgeted  -> ... (requires extra approval, e.g. CFO/CEO)
+    ///   RouteByBudget -> NonBudgeted                    -> ... (CFO/CEO path)
+    ///   RouteByBudget -> HRDirectorOrAssociateDirector  -> ... (exception roles)
+    ///   RouteByBudget -> HODDepartmentHeadApproval      -> ... (standard roles)
     /// </summary>
     public class HiringRequest_RouteByBudgetActivity : ActivityTemplate
     {
@@ -89,8 +108,28 @@ namespace Shared.Activities
 
         private static readonly object LogLock = new object();
 
-        private const string RouteBudgeted    = "Budgeted";
-        private const string RouteNonBudgeted = "NonBudgeted";
+        // Exception positions — when the job title matches any of these AND the
+        // request is budgeted, routing goes to HR Director / Associate Director
+        // instead of the standard HOD path. Stored in canonical normalized form
+        // (lowercased, all non-alphanumeric chars stripped). The matcher below
+        // uses EXACT equality on the normalized form, not Contains — by design,
+        // so a title like "CEO Office Coordinator" does NOT escalate. Keep this
+        // list in sync with the other HR routing activities' equivalents.
+        private static readonly string[] ExceptionPositionsNormalized =
+        {
+            "ceo",
+            "chiefexecutiveofficer",
+            "vpinternalaudit",
+            "boardofficemanager",
+            "managerboardoffice",
+            "managerceooffice",
+            "vicepresidentinternalaudit",
+            "n1leadership"
+        };
+
+        private const string RouteNonBudgeted                  = "NonBudgeted";
+        private const string RouteHRDirectorOrAssociateDirector = "HRDirectorOrAssociateDirector";
+        private const string RouteHODDepartmentHeadApproval    = "HODDepartmentHeadApproval";
 
         public override void Execute(WorkflowItem workflowItem)
         {
@@ -104,23 +143,48 @@ namespace Shared.Activities
 
             try
             {
-                string budget = GetProp(workflowItem, "budgetStatus");
+                string budget          = GetProp(workflowItem, "budgetStatus");
+                string jobTitleText    = GetProp(workflowItem, "jobTitleText");
+                string reportingToText = GetProp(workflowItem, "reportingToText");
+                bool   reportingToCeo  = IsReportingToCeo(reportingToText);
 
-                LogInfo($"Input: budgetStatus='{budget}'");
+                LogInfo($"Input: budgetStatus='{budget}', jobTitle='{jobTitleText}', reportingTo='{reportingToText}', reportingToCeo={reportingToCeo}");
 
-                // Case-insensitive trim-tolerant match. "budgeted" (any casing /
-                // padding) -> Budgeted route; everything else -> NonBudgeted.
-                // We default to NonBudgeted (the stricter approval path) when
-                // the value is missing or unrecognised so a bad input never
-                // bypasses extra approval by accident.
+                // Case-insensitive trim-tolerant match for "budgeted". Anything
+                // else (incl. empty / unknown) falls into NonBudgeted - the
+                // stricter approval path. A bad input never accidentally
+                // bypasses extra approval.
                 bool isBudgeted = string.Equals(budget?.Trim(), "budgeted", StringComparison.OrdinalIgnoreCase);
-                string nextApprovalRoute = isBudgeted ? RouteBudgeted : RouteNonBudgeted;
 
-                if (string.IsNullOrWhiteSpace(budget))
-                    LogWarn($"budgetStatus is empty - defaulting to {RouteNonBudgeted}.");
-                else if (!isBudgeted &&
-                         !string.Equals(budget.Trim(), "nonBudgeted", StringComparison.OrdinalIgnoreCase))
-                    LogWarn($"budgetStatus '{budget}' is not one of 'budgeted' / 'nonBudgeted' - defaulting to {RouteNonBudgeted}.");
+                string nextApprovalRoute;
+                if (!isBudgeted)
+                {
+                    nextApprovalRoute = RouteNonBudgeted;
+
+                    if (string.IsNullOrWhiteSpace(budget))
+                        LogWarn($"budgetStatus is empty - defaulting to {RouteNonBudgeted}.");
+                    else if (!string.Equals(budget.Trim(), "nonBudgeted", StringComparison.OrdinalIgnoreCase))
+                        LogWarn($"budgetStatus '{budget}' is not one of 'budgeted' / 'nonBudgeted' - defaulting to {RouteNonBudgeted}.");
+                }
+                else if (IsExceptionPosition(jobTitleText) || reportingToCeo)
+                {
+                    // Two signals trigger this branch in the budgeted case:
+                    //   1. Job title is an exception position (CEO / VP-Internal
+                    //      Audit / Board Office Manager / Manager - CEO Office /
+                    //      N-1 Leadership / etc.).
+                    //   2. The free-text "Reports To" field contains "CEO" in
+                    //      any casing - matches "CEO", "Ceo", "Reports to CEO
+                    //      directly", "CEO Office", etc.
+                    // Either signal routes through HR Director or Associate
+                    // Director instead of the standard HOD step.
+                    nextApprovalRoute = RouteHRDirectorOrAssociateDirector;
+                    LogInfo($"Budgeted exception ({(IsExceptionPosition(jobTitleText) ? "title='" + jobTitleText + "'" : "reportingTo='" + reportingToText + "'")}) - routing via {RouteHRDirectorOrAssociateDirector}.");
+                }
+                else
+                {
+                    // Standard budgeted hire - HOD (Head of Department) approval.
+                    nextApprovalRoute = RouteHODDepartmentHeadApproval;
+                }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
 
@@ -135,6 +199,50 @@ namespace Shared.Activities
         }
 
         public override void Complete(WorkflowItem workflowItem) { }
+
+        // Normalize-then-EXACT-match for exception positions. Strips every
+        // non-alphanumeric character (spaces, dashes, dots, parentheses) and
+        // lowercases the rest so input variations all collapse to the same
+        // canonical form, then checks whether that canonical form is EXACTLY
+        // one of the canonical exception patterns. Equality (vs. Contains) is
+        // intentional - many ordinary titles contain these substrings ("CEO
+        // Office Coordinator", "Junior Board Office Manager Assistant", etc.)
+        // that should NOT escalate. New exception titles must be added
+        // explicitly to ExceptionPositionsNormalized above.
+        private static bool IsExceptionPosition(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return false;
+            string norm = Normalize(title);
+            foreach (var x in ExceptionPositionsNormalized) if (x == norm) return true;
+            return false;
+        }
+
+        // Case-insensitive substring check for "CEO" anywhere in a free-text
+        // reporting-to value. Matches "CEO", "Ceo", "ceo", "CEO Office",
+        // "Reports to CEO directly", "Deputy of the CEO", etc. - any indication
+        // that the role reports up to the CEO. Used alongside IsExceptionPosition
+        // so a budgeted hire whose Reports To names the CEO routes to the same
+        // HR Director / Associate Director path as the explicit exception roles.
+        // Case-insensitive substring check for "CEO" anywhere in a free-text
+        // reporting-to value. Matches "CEO", "Ceo", "ceo", "CEO Office",
+        // "Reports to CEO directly", "Deputy of the CEO", etc.
+        private static bool IsReportingToCeo(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s))
+                return false;
+
+            s = s.Trim();
+
+            return string.Equals(s, "CEO", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(s, "Chief Executive Officer", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string Normalize(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (char c in s) if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+            return sb.ToString();
+        }
 
         private static string GetProp(WorkflowItem i, string k)
         {
