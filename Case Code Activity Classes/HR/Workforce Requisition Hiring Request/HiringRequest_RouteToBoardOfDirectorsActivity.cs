@@ -130,7 +130,7 @@ namespace Shared.Activities
                 LogInfo($"Input: jobTitle='{jobTitleText}', reportingTo='{reportingToText}', reportingToCeo={reportingToCeo}, isException={isException}");
 
                 string nextApprovalRoute;
-                if (reportingToCeo || isException)
+                if (reportingToCeo && isException)
                 {
                     // Either signal alone triggers the Board of Directors step.
                     nextApprovalRoute = RouteBoardOfDirectors;
