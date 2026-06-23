@@ -8,7 +8,7 @@ using System.Threading;
 
 namespace Shared.Activities
 {
-    public class CandidateSelectionForm_RouteByPositionAndGradeAActivity : ActivityTemplate
+    public class CandidateSelectionForm_RouteByPositionAndGradeActivity : ActivityTemplate
     {
         private static readonly string LogDirectory = CodeActivityConfig.Get("CaseActivities:LogDirectory");
 
@@ -68,51 +68,54 @@ namespace Shared.Activities
 
         private static readonly object LogLock = new object();
 
-        #region Business rules 
+        #region Business rules
 
         /// <summary>
-        /// Routes the Candidate Selection Form after CPCO approval.      
+        /// Routes the Candidate Selection Form based purely on whether the job
+        /// title is one of the protected "exception positions".
         ///
-        ///   1. Exception positions go to the Board of Directors regardless of grade:
-        ///        - CEO
-        ///        - VP - Internal Audit
-        ///        - Board Office Manager
-        ///        - N-1 Leadership
-        ///        -> nextApprovalRoute = "BoDApproval"
+        ///   1. Exception positions (CEO / Chief Executive Officer /
+        ///      VP - Internal Audit / Vice President - Internal Audit /
+        ///      Board Office Manager / Manager - Board Office /
+        ///      Manager - CEO Office / N-1 Leadership) take the position
+        ///      branch:
+        ///        -> nextApprovalRoute = "Position"
         ///
-        ///   2. Grade A, B, C, or D (non-exception positions) require CEO approval:
-        ///        -> nextApprovalRoute = "CEOApproval"
+        ///   2. Every other title takes the grade branch (grade-band routing
+        ///      happens in a downstream activity):
+        ///        -> nextApprovalRoute = "Grade"
         ///
-        ///   3. Grade E or F (non-exception positions) are final after CPCO:
-        ///        -> nextApprovalRoute = "Direct"
+        /// Title matching uses the same canonical normalization as the other
+        /// HR routing activities (lowercase + strip every non-alphanumeric
+        /// char) with EXACT equality on the normalized form against
+        /// ExceptionPositionsNormalized.
         ///
-        /// Inputs  (form fields persisted as WorkflowItem.Properties):
-        ///   - jobTitleText : "Standard" | "CEO" | "VPInternalAudit" |
-        ///                        "BoardOfficeManager" | "N1Leadership"
-        ///   - gradeLevel       : "A" | "B" | "C" | "D" | "E" | "F"
+        /// Inputs  (WorkflowItem.Properties):
+        ///   - DocumentId    : long
+        ///   - jobTitleText  : free-text job title
         ///
-        /// Output (written back to WorkflowItem.Properties):
-        ///   - nextApprovalRoute : "BoDApproval" | "CEOApproval" | "Direct"
-        /// </summary>       
+        /// Output (WorkflowItem.Properties):
+        ///   - nextApprovalRoute : "Position" | "Grade"
+        ///
+        /// gradeLevelText is intentionally NOT read here - this activity's
+        /// sole responsibility is the position-vs-grade split. Grade-band
+        /// logic lives downstream on the "Grade" branch.
+        /// </summary>
         #endregion
 
-
-        // Senior grades require CEO endorsement. Matched with Contains, so
-        // "A", "A1", "B2", "C", "C2", "D", "D1", "D2", "Grade-A", " d "
-        // all count as senior — while "E", "F2", "G", "H" don't. A future
-        // grade letter like "I"/"J" not in this list automatically routes
-        // through the non-senior branch without a code change.
-        private static readonly string[] SeniorGrades = { "A", "B", "C", "D" };
-
         // Exception positions — when the job title matches any of these, the
-        // request bypasses the grade logic and routes straight to BoD.
-        // Stored normalized (lowercased, all non-alphanumeric chars stripped)
-        // so the lookup tolerates spacing / dashes / dots / casing variations:
-        //   "CEO" / "C.E.O." / "ceo"                       → match
-        //   "VP-Internal Audit" / "VP Internal Audit"      → match
-        //   "Board Office Manager" / "BoardOfficeManager"  → match
-        //   "Manager - Board Office" / "Manager Board Off" → match
-        //   "N-1 Leadership" / "N1Leadership" / "n1 lead.."→ match
+        // request takes the position-first path. Stored normalized
+        // (lowercased, all non-alphanumeric chars stripped) so the lookup
+        // tolerates spacing / dashes / dots / casing variations:
+        //   "CEO" / "C.E.O." / "ceo"                       -> "ceo"
+        //   "Chief Executive Officer"                      -> "chiefexecutiveofficer"
+        //   "VP-Internal Audit" / "VP Internal Audit"      -> "vpinternalaudit"
+        //   "Vice President - Internal Audit"              -> "vicepresidentinternalaudit"
+        //   "Board Office Manager" / "BoardOfficeManager"  -> "boardofficemanager"
+        //   "Manager - Board Office" / "ManagerBoardOffice"-> "managerboardoffice"
+        //   "Manager - CEO Office"                         -> "managerceooffice"
+        //   "N-1 Leadership" / "N1Leadership"              -> "n1leadership"
+        // Keep this list in sync with the other HR routing activities.
         private static readonly string[] ExceptionPositionsNormalized =
         {
             "ceo",
@@ -125,14 +128,13 @@ namespace Shared.Activities
             "n1leadership"
         };
 
-        private const string RouteBoDApproval  = "BoDApproval";
-        private const string RouteCEOApproval  = "CEOApproval";
-        private const string RouteArchiveToDMS = "ArchiveToDMS";
+        private const string RoutePosition = "Position";
+        private const string RouteGrade    = "Grade";
 
         public override void Execute(WorkflowItem workflowItem)
         {
             string documentIdStr = GetProp(workflowItem, "DocumentId");
-            LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeAActivity BEGIN  DocumentId={documentIdStr} ----");
+            LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeActivity BEGIN  DocumentId={documentIdStr} ----");
             if (!long.TryParse(documentIdStr, out long documentId) || documentId <= 0)
             {
                 LogError($"Invalid DocumentId: '{documentIdStr}'");
@@ -142,57 +144,42 @@ namespace Shared.Activities
             try
             {
                 string position = GetProp(workflowItem, "jobTitleText");
-                string grade    = GetProp(workflowItem, "gradeLevelText");
 
-                LogInfo($"Input: jobTitle='{position}', gradeLevel='{grade}'");
+                LogInfo($"Input: jobTitle='{position}'");
 
                 string nextApprovalRoute;
                 if (IsExceptionPosition(position))
                 {
-                    // CEO / VP-Internal Audit / Board Office Manager / N-1
-                    // Leadership — these protected roles always escalate to
-                    // the Board of Directors regardless of grade.
-                    nextApprovalRoute = RouteBoDApproval;
-                    LogInfo($"Exception position '{position}' matched → routing via {RouteBoDApproval}.");
-                }
-                else if (IsSenior(grade))
-                {
-                    // Grades A-D (incl. A1, B2, C2, D1, …) — CEO approval.
-                    nextApprovalRoute = RouteCEOApproval;
+                    // CEO / Chief Executive Officer / VP-Internal Audit /
+                    // Vice President - Internal Audit / Board Office Manager /
+                    // Manager - Board Office / Manager - CEO Office /
+                    // N-1 Leadership - take the position-first path.
+                    nextApprovalRoute = RoutePosition;
+                    LogInfo($"Exception position '{position}' matched -> routing via {RoutePosition}.");
                 }
                 else
                 {
-                    // Anything not senior (E, F, F2, G, H, empty, unknown)
-                    // — CPCO was the final step; archive directly.
-                    nextApprovalRoute = RouteArchiveToDMS;
+                    // Anything else - take the grade-first path. Grade-band
+                    // routing happens downstream.
+                    nextApprovalRoute = RouteGrade;
 
-                    if (string.IsNullOrWhiteSpace(grade))
-                        LogWarn($"gradeLevel is empty — defaulting to {RouteArchiveToDMS}.");
+                    if (string.IsNullOrWhiteSpace(position))
+                        LogWarn($"jobTitleText is empty - defaulting to {RouteGrade}.");
                 }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
 
-                LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeAActivity nextApprovalRoute={nextApprovalRoute} ");
-                LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeAActivity END    DocumentId={documentId}  result=success ----");
+                LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeActivity nextApprovalRoute={nextApprovalRoute} ");
+                LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeActivity END    DocumentId={documentId}  result=success ----");
             }
             catch (Exception ex)
             {
                 LogException("Execute() failed", ex);
-                LogInfo($"----  CandidateSelectionForm_RouteByPositionAndGradeAActivity END    DocumentId={documentIdStr}  result=FAILED ----");
+                LogInfo($"---- CandidateSelectionForm_RouteByPositionAndGradeActivity END    DocumentId={documentIdStr}  result=FAILED ----");
             }
         }
 
         public override void Complete(WorkflowItem workflowItem) { }
-
-        // Case-insensitive, substring-based: "A", "A1", "B2", "C2", "D",
-        // "D1", "D2", "Grade-A", "  d  " all match. "E", "F2", "G", "H" don't.
-        private static bool IsSenior(string g)
-        {
-            if (string.IsNullOrWhiteSpace(g)) return false;
-            string up = g.ToUpperInvariant();
-            foreach (var s in SeniorGrades) if (up.Contains(s)) return true;
-            return false;
-        }
 
         // Normalize-then-EXACT-match for exception positions. Strips every
         // non-alphanumeric character (spaces, dashes, dots, parentheses) and
@@ -264,7 +251,7 @@ namespace Shared.Activities
             try
             {
                 string path = Path.Combine(LogDirectory,
-                    "CandidateSelectionForm_RouteByPositionAndGradeAActivity-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
+                    "CandidateSelectionForm_RouteByPositionAndGradeActivity-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
                 string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + level
                             + "  [tid:" + Thread.CurrentThread.ManagedThreadId + "]  " + message + Environment.NewLine;
                 lock (LogLock)
