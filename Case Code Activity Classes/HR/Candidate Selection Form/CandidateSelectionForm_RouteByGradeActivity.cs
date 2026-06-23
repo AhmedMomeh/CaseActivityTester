@@ -8,13 +8,16 @@ using System.Threading;
 namespace Shared.Activities
 {
     /// <summary>
-    /// Routes the Candidate Selection Form to its next approver purely by
-    /// grade band. Mirrors HiringRequest_RouteByGradeActivity so candidate
-    /// selection and hiring-request flows escalate on identical signals.
+    /// Routes the Candidate Selection Form to its next approver based on
+    /// grade band OR whether the candidate is a direct CEO reportee. Mirrors
+    /// HiringRequest_RouteByGradeActivity's grade matcher and pairs it with
+    /// the isDirectReporteeToCEO escalation signal used elsewhere in HR.
     ///
-    /// Rules:
-    ///   IsSenior(gradeLevelText)  -> nextApprovalRoute = "CPCO"
-    ///   else                      -> nextApprovalRoute = "HRDirectorOrAssociateDirector"
+    /// Rules (OR - either signal is enough):
+    ///   IsSenior(gradeLevelText)  OR  isDirectReporteeToCEO == true
+    ///     -> nextApprovalRoute = "CPCO"
+    ///   else
+    ///     -> nextApprovalRoute = "HRDirectorOrAssociateDirector"
     ///
     /// Senior matching is case-insensitive substring-based, so all of these
     /// count as senior and route to CPCO:
@@ -22,11 +25,16 @@ namespace Shared.Activities
     ///   "  d  ".
     /// Anything not containing A/B/C/D - "E", "E1", "F", "F2", "G", "H",
     /// empty, unknown - falls through to the HR Director / Associate Director
-    /// route.
+    /// route UNLESS isDirectReporteeToCEO is true, in which case CPCO still
+    /// applies (a direct CEO reportee always gets CPCO oversight regardless
+    /// of grade).
     ///
     /// Input  (WorkflowItem.Properties):
-    ///   - DocumentId      : long
-    ///   - gradeLevelText  : string  ("A".."H" or "A1", "B2" sub-bands etc.)
+    ///   - DocumentId             : long
+    ///   - gradeLevelText         : string  ("A".."H" or "A1", "B2" sub-bands etc.)
+    ///   - isDirectReporteeToCEO  : string  form-checkbox value
+    ///                                       ("true"/"yes"/"1"/"on" -> true,
+    ///                                        anything else -> false)
     ///
     /// Output (WorkflowItem.Properties):
     ///   - nextApprovalRoute : "CPCO" | "HRDirectorOrAssociateDirector"
@@ -117,20 +125,25 @@ namespace Shared.Activities
 
             try
             {
-                string grade = GetProp(workflowItem, "gradeLevelText");
+                string grade            = GetProp(workflowItem, "gradeLevelText");
+                bool   isDirectReportee = ParseBool(GetProp(workflowItem, "isDirectReporteeToCEO"));
+                bool   isSenior         = IsSenior(grade);
 
-                LogInfo($"Input: gradeLevel='{grade}'");
+                LogInfo($"Input: gradeLevel='{grade}', isDirectReporteeToCEO={isDirectReportee}, isSenior={isSenior}");
 
                 string nextApprovalRoute;
-                if (IsSenior(grade))
+                if (isSenior || isDirectReportee)
                 {
-                    // Grades A-D (incl. A1, A2, B2, C2, D1, D2, ...) -> CPCO.
+                    // Senior grade (A-D incl. A1/A2/B2/C2/D1/D2) OR direct CEO
+                    // reportee -> CPCO oversight.
                     nextApprovalRoute = RouteCPCO;
+                    LogInfo($"Matched CPCO route ({(isSenior ? "isSenior" : "isDirectReporteeToCEO")}) -> {RouteCPCO}.");
                 }
                 else
                 {
-                    // E and below (incl. E1, F, F2, G, H, empty, unknown) ->
-                    // HR Director / Associate Director.
+                    // E and below (incl. E1, F, F2, G, H, empty, unknown) AND
+                    // not a direct CEO reportee -> HR Director / Associate
+                    // Director.
                     nextApprovalRoute = RouteHRDirectorOrAssociateDirector;
 
                     if (string.IsNullOrWhiteSpace(grade))
@@ -159,6 +172,18 @@ namespace Shared.Activities
             string up = g.ToUpperInvariant();
             foreach (var s in SeniorGrades) if (up.Contains(s)) return true;
             return false;
+        }
+
+        // Parses the form's isDirectReporteeToCEO checkbox value into a bool.
+        // Accepts the usual truthy strings the form layer can emit
+        // ("true"/"yes"/"1"/"on" - case-insensitive, trim-tolerant);
+        // anything else (incl. empty) is false. Same matcher used by the
+        // other HR routing activities so behavior stays consistent.
+        private static bool ParseBool(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            string v = s.Trim().ToLowerInvariant();
+            return v == "true" || v == "yes" || v == "1" || v == "on";
         }
 
         private static string GetProp(WorkflowItem i, string k)
