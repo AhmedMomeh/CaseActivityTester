@@ -623,9 +623,14 @@ function ApprovedMemoReference(row) {
     return form.approvedMemoReference ?? "";
 }
 
-function getCandidateName(row) {
+function CandidateName(row) {
     var form = GetForm(row);
     return form.candidateName ?? "";
+}
+
+function LPOReference(row) {
+    var form = GetForm(row);
+    return form.requestReference ?? "";
 }
 
 
@@ -689,8 +694,9 @@ function GetForm(row) {
     // "Label" you set in Admin -> Nodes -> Inbox -> Custom column).
     var CUSTOM_SEARCH_FIELDS = [
         { id: "txtFilterInboxApprovedMemoReference", label: "Approved Memo Reference", header: "Approved Memo Reference" },
-        { id: "txtFilterInboxCandidateName",         label: "Candidate Name",          header: "Candidate Name"          }
-    ];
+        { id: "txtFilterInboxCandidateName", label: "Candidate Name", header: "Candidate Name" },
+        { id: "txtFilterInboxLPOReference", label: "LPO Reference", header: "LPO Reference" }
+    ]; 
 
     // When a custom filter is active, we ask the Portal for this many rows
     // in one batch instead of the default page size. That way the client
@@ -724,26 +730,13 @@ function GetForm(row) {
         if (!hasActiveCustomSearch()) return;
         if (!options || !options.url || !INBOX_FETCH_URL.test(options.url)) return;
 
-        // Log the matched request shape so we can spot what parameter name
-        // controls page size. Open DevTools console -> filter on
-        // "[inbox custom-filter]" to see these.
-        console.log('[inbox custom-filter] INTERCEPT URL :', options.url);
-        console.log('[inbox custom-filter] INTERCEPT TYPE:', options.type, 'contentType:', options.contentType);
-        console.log('[inbox custom-filter] INTERCEPT BODY:', options.data);
-
-        var rewroteCount = 0;
-
         // 1) Query-string parameters (GET requests).
-        var newUrl = options.url.replace(
-            /([?&](?:pageSize|PageSize|page_size|size|length|Length|top|Top|take|Take)=)\d+/gi,
-            function (m, prefix) { rewroteCount++; return prefix + BULK_PAGE_SIZE; });
-        newUrl = newUrl.replace(
-            /([?&](?:start|Start|pageIndex|PageIndex|page|Page|skip|Skip|offset|Offset)=)\d+/gi,
-            function (m, prefix) { rewroteCount++; return prefix + '0'; });
-        if (newUrl !== options.url) {
-            options.url = newUrl;
-            console.log('[inbox custom-filter] rewrote URL query string ->', options.url);
-        }
+        var newUrl = options.url
+            .replace(/([?&](?:pageSize|PageSize|page_size|size|length|Length|top|Top|take|Take)=)\d+/gi,
+                     '$1' + BULK_PAGE_SIZE)
+            .replace(/([?&](?:start|Start|pageIndex|PageIndex|page|Page|skip|Skip|offset|Offset)=)\d+/gi,
+                     '$1' + '0');
+        if (newUrl !== options.url) options.url = newUrl;
 
         // 2) JSON body. Walk every key recursively so nested DataTables-style
         //    bodies ({ pagination: { pageSize: 10 } }) also get patched.
@@ -753,10 +746,10 @@ function GetForm(row) {
                 var lo = k.toLowerCase();
                 if (lo === 'pagesize' || lo === 'page_size' || lo === 'size' ||
                     lo === 'length'   || lo === 'top'       || lo === 'take') {
-                    obj[k] = BULK_PAGE_SIZE; rewroteCount++;
+                    obj[k] = BULK_PAGE_SIZE;
                 } else if (lo === 'start'  || lo === 'pageindex' || lo === 'page' ||
                            lo === 'skip'   || lo === 'offset') {
-                    obj[k] = 0; rewroteCount++;
+                    obj[k] = 0;
                 } else if (typeof obj[k] === 'object') {
                     patchObj(obj[k]);
                 }
@@ -774,26 +767,13 @@ function GetForm(row) {
             if (bodyObj && typeof bodyObj === 'object') {
                 patchObj(bodyObj);
                 options.data = (bodyString === null) ? bodyObj : JSON.stringify(bodyObj);
-                console.log('[inbox custom-filter] rewrote JSON body ->', options.data);
             } else if (bodyString !== null) {
-                // Form-urlencoded fallback: pageSize=10&pageIndex=0&...
-                var newBody = bodyString
+                options.data = bodyString
                     .replace(/((?:pageSize|PageSize|page_size|size|length|Length|top|Top|take|Take)=)\d+/gi,
-                             function (m, prefix) { rewroteCount++; return prefix + BULK_PAGE_SIZE; })
+                             '$1' + BULK_PAGE_SIZE)
                     .replace(/((?:start|Start|pageIndex|PageIndex|page|Page|skip|Skip|offset|Offset)=)\d+/gi,
-                             function (m, prefix) { rewroteCount++; return prefix + '0'; });
-                if (newBody !== bodyString) {
-                    options.data = newBody;
-                    console.log('[inbox custom-filter] rewrote form body ->', options.data);
-                }
+                             '$1' + '0');
             }
-        }
-
-        if (rewroteCount === 0) {
-            console.warn('[inbox custom-filter] URL matched but no page-size / offset key found to rewrite. ' +
-                         'Inspect the body above and add the actual parameter name to the rewrite list.');
-        } else {
-            console.log('[inbox custom-filter] rewrote', rewroteCount, 'value(s); pageSize -> ' + BULK_PAGE_SIZE);
         }
     });
 
