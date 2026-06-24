@@ -656,3 +656,143 @@ function GetForm(row) {
 }
 
 
+// ===========================================================================
+// Inbox custom-column search filter
+//
+// The Portal's built-in Inbox Search panel (id="filtersContainer") only
+// exposes server-side filters (Reference Number, dates, Document Type,
+// Status, Read/Locked/Assigned/Overdue). JS-computed custom columns like
+// "Approved Memo Reference" or "Candidate Name" aren't known to the server,
+// so they can't be filtered from that panel by default.
+//
+// This block adds a labeled <input> for each custom column into the
+// existing Search panel. When the user clicks the Portal's built-in
+// "Search" button, the server-side search runs as usual and the grid
+// reloads; we then apply a client-side filter on top, hiding rows whose
+// custom-column cell doesn't contain the typed text. The Portal's "Clear"
+// button is also hooked so our inputs reset together with the rest.
+//
+// Limitation: client-side filter operates only on rows currently rendered
+// in the grid (so server pagination boundaries still apply). For true
+// cross-page search, the field would need to be added to
+// WorkflowDefinition.SearchFormInputDesigner and indexed by the Crawler.
+//
+// To add another searchable custom column, append an entry to
+// CUSTOM_SEARCH_FIELDS below.
+// ===========================================================================
+(function attachInboxCustomColumnFilter() {
+    if (window.__inboxCustomColumnFilterInstalled) return;
+    window.__inboxCustomColumnFilterInstalled = true;
+
+    // Each entry adds one input to the Search panel + one column-text match
+    // on the grid. `label` must match the grid header text exactly (the
+    // "Label" you set in Admin -> Nodes -> Inbox -> Custom column).
+    var CUSTOM_SEARCH_FIELDS = [
+        { id: "txtFilterInboxApprovedMemoReference", label: "Approved Memo Reference", header: "Approved Memo Reference" },
+        { id: "txtFilterInboxCandidateName",         label: "Candidate Name",          header: "Candidate Name"          }
+    ];
+
+    // Inject inputs into the Portal's Search panel. Re-runs are idempotent.
+    function injectInputs() {
+        var $row = $('#filtersContainer > .row').first();
+        if (!$row.length) return false;
+
+        CUSTOM_SEARCH_FIELDS.forEach(function (f) {
+            if ($('#' + f.id).length) return;   // already injected
+            var html =
+                '<div class="col-lg-3 col-md-3 col-sm-6 customColFilterCol">' +
+                  '<div class="form-group">' +
+                    '<label class="control-label">' + f.label + '</label>' +
+                    '<input type="text" id="' + f.id + '" class="form-control" autocomplete="off" />' +
+                  '</div>' +
+                '</div>';
+            // Append before the action-buttons col so they stay at the end.
+            var $actions = $row.find('.list-action-filter').first();
+            if ($actions.length) $actions.before(html);
+            else                 $row.append(html);
+        });
+        return true;
+    }
+
+    // For each registered field, locate the grid column index by matching
+    // the header text, then hide rows whose cell at that index doesn't
+    // contain the typed text. Empty input means "no filter from this field".
+    function applyClientFilter() {
+        $('table').each(function () {
+            var $table = $(this);
+            var $headerRow = $table.find('thead tr').first();
+            if (!$headerRow.length) $headerRow = $table.find('tr').first();
+            if (!$headerRow.length) return;
+
+            // Map: column index -> query string for any field that targets it.
+            var colQueries = {};
+            CUSTOM_SEARCH_FIELDS.forEach(function (f) {
+                var q = ($('#' + f.id).val() || '').trim().toLowerCase();
+                if (!q) return;
+                var idx = -1;
+                $headerRow.find('th, td').each(function (i) {
+                    var ht = ($(this).text() || '').replace(/\s+/g, ' ').trim();
+                    if (ht === f.header) { idx = i; return false; }
+                });
+                if (idx >= 0) colQueries[idx] = q;
+            });
+
+            // No active queries -> show everything (clear any prior hide).
+            $table.find('tbody tr, tr').each(function () {
+                var $r = $(this);
+                if ($r.find('th').length) return;
+                var visible = true;
+                for (var idxStr in colQueries) {
+                    var idx = parseInt(idxStr, 10);
+                    var $cell = $r.find('td').eq(idx);
+                    var txt = ($cell.text() || '').toLowerCase();
+                    if (txt.indexOf(colQueries[idx]) < 0) { visible = false; break; }
+                }
+                $r.toggle(visible);
+            });
+        });
+    }
+
+    function bindButtons() {
+        var $search = $('#btnFilterInboxSearch');
+        if ($search.length && !$search.data('customColBound')) {
+            $search.data('customColBound', true);
+            $search.on('click.customColFilter', function () {
+                // Server-side search reloads the grid; apply our filter on top
+                // after the reload finishes. Use staggered timers because the
+                // Portal does the reload asynchronously.
+                setTimeout(applyClientFilter, 250);
+                setTimeout(applyClientFilter, 750);
+                setTimeout(applyClientFilter, 1500);
+            });
+        }
+        var $clear = $('#btnFilterInboxClear');
+        if ($clear.length && !$clear.data('customColBound')) {
+            $clear.data('customColBound', true);
+            $clear.on('click.customColFilter', function () {
+                CUSTOM_SEARCH_FIELDS.forEach(function (f) { $('#' + f.id).val(''); });
+                setTimeout(applyClientFilter, 250);
+            });
+        }
+    }
+
+    function setup() {
+        injectInputs();
+        bindButtons();
+    }
+
+    // Re-run after any ajaxSuccess (the grid reloads on search/sort/page).
+    $(document).ajaxSuccess(function () {
+        setTimeout(setup, 50);
+        // Also re-apply our client filter so it survives grid re-renders.
+        setTimeout(applyClientFilter, 300);
+    });
+
+    // Initial setup + short poll to catch the first render.
+    $(document).ready(function () { setTimeout(setup, 100); });
+    var tries = 0;
+    (function poll() {
+        setup();
+        if (tries++ < 40) setTimeout(poll, 250);   // ~10s
+    })();
+})();
