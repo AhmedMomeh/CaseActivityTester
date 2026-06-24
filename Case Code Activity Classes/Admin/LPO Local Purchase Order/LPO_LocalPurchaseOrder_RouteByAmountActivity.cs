@@ -21,7 +21,7 @@ namespace Shared.Activities
 
             string nextApprovalRoute =
                 string.Equals(poType, "NonContract", StringComparison.OrdinalIgnoreCase)
-                && amount > CEO_THRESHOLD
+                && amount >= CEO_THRESHOLD
                     ? "NeedCEO"
                     : "Direct";
 
