@@ -692,6 +692,111 @@ function GetForm(row) {
         { id: "txtFilterInboxCandidateName",         label: "Candidate Name",          header: "Candidate Name"          }
     ];
 
+    // When a custom filter is active, we ask the Portal for this many rows
+    // in one batch instead of the default page size. That way the client
+    // filter sees all candidate matches at once and the user doesn't have
+    // to page through manually. Trade-off: larger response payloads. 10000
+    // is enough for most user inboxes; raise if you regularly exceed it.
+    var BULK_PAGE_SIZE = 10000;
+
+    // URL patterns considered to be Inbox fetches. Verified against this
+    // Portal version - the Inbox grid loads via /Task/v2/ListInbox (POST
+    // with DataTables-style { start, length, ... } in the body). The regex
+    // tolerates version-bump (/Task/v1, /Task/v3) and the no-version variant.
+    // Per-row Document.Form fetches (/Document/GetSearchDocument) are
+    // intentionally EXCLUDED so they aren't rewritten.
+    var INBOX_FETCH_URL = /\/Task\/(v\d+\/)?ListInbox\b/i;
+
+    function hasActiveCustomSearch() {
+        debugger;
+        for (var i = 0; i < CUSTOM_SEARCH_FIELDS.length; i++) {
+            if (($('#' + CUSTOM_SEARCH_FIELDS[i].id).val() || '').trim().length > 0) return true;
+        }
+        return false;
+    }
+
+    // jQuery ajaxSend hook - rewrites the next Inbox fetch to request a
+    // bulk page size when a custom filter is active. The Portal's normal
+    // server-side filters (Reference, Status, Date range, etc.) still apply;
+    // we just ask for all matching rows in one response instead of one
+    // page at a time. Client filter then narrows the rendered set further.
+    $(document).ajaxSend(function (event, xhr, options) {
+        if (!hasActiveCustomSearch()) return;
+        if (!options || !options.url || !INBOX_FETCH_URL.test(options.url)) return;
+
+        // Log the matched request shape so we can spot what parameter name
+        // controls page size. Open DevTools console -> filter on
+        // "[inbox custom-filter]" to see these.
+        console.log('[inbox custom-filter] INTERCEPT URL :', options.url);
+        console.log('[inbox custom-filter] INTERCEPT TYPE:', options.type, 'contentType:', options.contentType);
+        console.log('[inbox custom-filter] INTERCEPT BODY:', options.data);
+
+        var rewroteCount = 0;
+
+        // 1) Query-string parameters (GET requests).
+        var newUrl = options.url.replace(
+            /([?&](?:pageSize|PageSize|page_size|size|length|Length|top|Top|take|Take)=)\d+/gi,
+            function (m, prefix) { rewroteCount++; return prefix + BULK_PAGE_SIZE; });
+        newUrl = newUrl.replace(
+            /([?&](?:start|Start|pageIndex|PageIndex|page|Page|skip|Skip|offset|Offset)=)\d+/gi,
+            function (m, prefix) { rewroteCount++; return prefix + '0'; });
+        if (newUrl !== options.url) {
+            options.url = newUrl;
+            console.log('[inbox custom-filter] rewrote URL query string ->', options.url);
+        }
+
+        // 2) JSON body. Walk every key recursively so nested DataTables-style
+        //    bodies ({ pagination: { pageSize: 10 } }) also get patched.
+        function patchObj(obj) {
+            if (!obj || typeof obj !== 'object') return;
+            Object.keys(obj).forEach(function (k) {
+                var lo = k.toLowerCase();
+                if (lo === 'pagesize' || lo === 'page_size' || lo === 'size' ||
+                    lo === 'length'   || lo === 'top'       || lo === 'take') {
+                    obj[k] = BULK_PAGE_SIZE; rewroteCount++;
+                } else if (lo === 'start'  || lo === 'pageindex' || lo === 'page' ||
+                           lo === 'skip'   || lo === 'offset') {
+                    obj[k] = 0; rewroteCount++;
+                } else if (typeof obj[k] === 'object') {
+                    patchObj(obj[k]);
+                }
+            });
+        }
+
+        if (options.data) {
+            var bodyString = typeof options.data === 'string' ? options.data : null;
+            var bodyObj    = (bodyString === null) ? options.data : null;
+
+            if (bodyString !== null) {
+                try { bodyObj = JSON.parse(bodyString); } catch (e) { bodyObj = null; }
+            }
+
+            if (bodyObj && typeof bodyObj === 'object') {
+                patchObj(bodyObj);
+                options.data = (bodyString === null) ? bodyObj : JSON.stringify(bodyObj);
+                console.log('[inbox custom-filter] rewrote JSON body ->', options.data);
+            } else if (bodyString !== null) {
+                // Form-urlencoded fallback: pageSize=10&pageIndex=0&...
+                var newBody = bodyString
+                    .replace(/((?:pageSize|PageSize|page_size|size|length|Length|top|Top|take|Take)=)\d+/gi,
+                             function (m, prefix) { rewroteCount++; return prefix + BULK_PAGE_SIZE; })
+                    .replace(/((?:start|Start|pageIndex|PageIndex|page|Page|skip|Skip|offset|Offset)=)\d+/gi,
+                             function (m, prefix) { rewroteCount++; return prefix + '0'; });
+                if (newBody !== bodyString) {
+                    options.data = newBody;
+                    console.log('[inbox custom-filter] rewrote form body ->', options.data);
+                }
+            }
+        }
+
+        if (rewroteCount === 0) {
+            console.warn('[inbox custom-filter] URL matched but no page-size / offset key found to rewrite. ' +
+                         'Inspect the body above and add the actual parameter name to the rewrite list.');
+        } else {
+            console.log('[inbox custom-filter] rewrote', rewroteCount, 'value(s); pageSize -> ' + BULK_PAGE_SIZE);
+        }
+    });
+
     // Inject inputs into the Portal's Search panel. Re-runs are idempotent.
     function injectInputs() {
         var $row = $('#filtersContainer > .row').first();
