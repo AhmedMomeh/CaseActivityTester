@@ -591,7 +591,68 @@ function ReplaceOriginalFile() {
 }
 
 
+// ===========================================================================
+// Inbox custom-column functions
+//
+// Functions referenced by the "Function" field on Admin -> Nodes -> Inbox ->
+// Custom column. The Portal calls them once per row when rendering the
+// Inbox grid, passing a row object that includes documentId. Each function
+// returns the string to display in its column.
+//
+// Per the official "How to add a Custom Column to a Node" guide, the JS for
+// these functions can live either in the Parameters page Custom JavaScript
+// field OR in this CustomJs.js (both load globally). Keeping them here so
+// they're versioned in source control alongside the rest of the Portal
+// customisations.
+//
+// Convention: one function per column. Each calls the shared GetForm(row)
+// helper to fetch the case's saved formData JSON, then returns the value of
+// the matching key (empty string when missing - so cases on other workflows
+// or older cases without the field show blank cells, not "undefined").
+// ===========================================================================
+
+// ---- Asset Disposal and Sale: Approved Memo Reference ---------------------
+// Reads form.approvedMemoReference. Bound to the Inbox custom column with:
+//   Name    : approvedMemoReference
+//   Label   : Approved Memo Reference
+//   Function: ApprovedMemoReference
+// The Asset Disposal and Sale workflow's Initiation Form must have a Text
+// Field whose API Property Name is exactly "approvedMemoReference".
+function ApprovedMemoReference(row) {
+    var form = GetForm(row);
+    return form.approvedMemoReference ?? "";
+}
+
+function getCandidateName(row) {
+    var form = GetForm(row);
+    return form.candidateName ?? "";
+}
 
 
+// ---- Shared helper --------------------------------------------------------
+// Fetches the case behind a grid row and returns its formData as a parsed
+// object. The Portal stores formData as a JSON-string inside a JSON
+// response, hence the double parse (matches the pattern in the official
+// guide).
+//
+// Defined ONCE here. Any future custom-column function added to this file
+// should call GetForm(row) and NOT redefine the helper.
+function GetForm(row) {
+    var token = window.IdentityAccessToken;
+    var form  = "";
+    var settings = {
+        "url"     : "/Document/GetSearchDocument?id=" + row.documentId,
+        "method"  : "GET",
+        "async"   : false,   // synchronous - the grid expects the return value before next row paints
+        "timeout" : 0,
+        "headers" : { "Authorization": "Bearer " + token }
+    };
+    $.ajax(settings).done(function (response) {
+        var formString = JSON.stringify(response.formData);
+        var formParse  = JSON.parse(formString);
+        form           = JSON.parse(formParse);
+    });
+    return form;
+}
 
 
