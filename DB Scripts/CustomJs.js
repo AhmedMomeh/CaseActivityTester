@@ -561,21 +561,30 @@ function LPOReference(row) {
 // object. The Portal stores formData as a JSON-string inside a JSON
 
 function GetForm(row) {
+      var docId =
+        (row && (row.documentId || row.DocumentId ||
+                 row.documentID || row.DocumentID ||
+                 row.id          || row.Id));
+    if (docId === undefined || docId === null || docId === '') return {};
+
     var token = window.IdentityAccessToken;
     var form  = "";
     var settings = {
-        "url"     : "/Document/GetSearchDocument?id=" + row.documentId,
+        "url"     : "/Document/GetSearchDocument?id=" + encodeURIComponent(docId),
         "method"  : "GET",
         "async"   : false,   // synchronous - the grid expects the return value before next row paints
         "timeout" : 0,
         "headers" : { "Authorization": "Bearer " + token }
     };
     $.ajax(settings).done(function (response) {
-        var formString = JSON.stringify(response.formData);
-        var formParse  = JSON.parse(formString);
-        form           = JSON.parse(formParse);
+        if (!response || response.formData == null) return;
+        try {
+            var formString = JSON.stringify(response.formData);
+            var formParse  = JSON.parse(formString);
+            form           = JSON.parse(formParse);
+        } catch (e) { form = ""; }
     });
-    return form;
+    return form || {};
 }
 
 
@@ -599,12 +608,12 @@ function GetForm(row) {
   
     var BULK_PAGE_SIZE = 10000;
 
-    // URL patterns considered to be Inbox fetches. Verified against this
+    // URL patterns considered to be node fetches that we should bulk-page.
+    // Covers every list node the Portal renders with the same Search panel:
+  
+    var INBOX_FETCH_URL = /\/(Task|Document)\/(v\d+\/)?List(Inbox|Draft|Completed|Closed|MyRequests|Archived)\b/i;
 
-    var INBOX_FETCH_URL = /\/Task\/(v\d+\/)?ListInbox\b/i;
-
-    function hasActiveCustomSearch() {
-        debugger;
+    function hasActiveCustomSearch() {        
         for (var i = 0; i < CUSTOM_SEARCH_FIELDS.length; i++) {
             if (($('#' + CUSTOM_SEARCH_FIELDS[i].id).val() || '').trim().length > 0) return true;
         }
@@ -614,6 +623,7 @@ function GetForm(row) {
     // jQuery ajaxSend hook - rewrites the next Inbox fetch to request 
  
     $(document).ajaxSend(function (event, xhr, options) {
+        debugger;
         if (!hasActiveCustomSearch()) return;
         if (!options || !options.url || !INBOX_FETCH_URL.test(options.url)) return;
 
@@ -726,10 +736,14 @@ function GetForm(row) {
     }
 
     function bindButtons() {
-        var $search = $('#btnFilterInboxSearch');
-        if ($search.length && !$search.data('customColBound')) {
-            $search.data('customColBound', true);
-            $search.on('click.customColFilter', function () {
+        // Match the Search button across every node: btnFilterInboxSearch,
+        // btnFilterDraftSearch, btnFilterCompletedSearch, etc. The Portal
+        // names them with a consistent btnFilter<NodeName>Search pattern.
+        $('button[id^="btnFilter"][id$="Search"]').each(function () {
+            var $btn = $(this);
+            if ($btn.data('customColBound')) return;
+            $btn.data('customColBound', true);
+            $btn.on('click.customColFilter', function () {
                 // Server-side search reloads the grid; apply our filter on top
                 // after the reload finishes. Use staggered timers because the
                 // Portal does the reload asynchronously.
@@ -737,15 +751,16 @@ function GetForm(row) {
                 setTimeout(applyClientFilter, 750);
                 setTimeout(applyClientFilter, 1500);
             });
-        }
-        var $clear = $('#btnFilterInboxClear');
-        if ($clear.length && !$clear.data('customColBound')) {
-            $clear.data('customColBound', true);
-            $clear.on('click.customColFilter', function () {
+        });
+        $('button[id^="btnFilter"][id$="Clear"]').each(function () {
+            var $btn = $(this);
+            if ($btn.data('customColBound')) return;
+            $btn.data('customColBound', true);
+            $btn.on('click.customColFilter', function () {
                 CUSTOM_SEARCH_FIELDS.forEach(function (f) { $('#' + f.id).val(''); });
                 setTimeout(applyClientFilter, 250);
             });
-        }
+        });
     }
 
     function setup() {
