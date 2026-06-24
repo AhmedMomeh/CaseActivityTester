@@ -11,17 +11,6 @@ window.JDEAuthHeader = "Basic SkRFT1JDSDp1Y2pkZTEyMw==";   // JDEORCH:ucjde123
 
 // ---------------------------------------------------------------------------
 // JDE Loader — shows a spinner overlay during any HTTP call to JDE so slow
-// responses don't leave dropdowns looking broken.
-//
-// Catches every transport the Portal uses:
-//   1. XMLHttpRequest        — Form.io URL dataSrc
-//   2. window.fetch          — newer Form.io builds
-//   3. jQuery $.ajax         — loadIsHRFromJDE etc. in this file
-//   4. Formio.makeRequest    — internal Form.io HTTP client
-//
-// Display: Portal's Common.mask if loaded, otherwise a self-contained CSS
-// overlay. Ref-counted so concurrent calls only show the overlay once.
-// URL-matched on "/jderest/orchestrator" so other traffic is unaffected.
 // ---------------------------------------------------------------------------
 (function attachJdeLoader() {
     if (window.__jdeLoaderInstalled) return;
@@ -129,16 +118,7 @@ window.JDEAuthHeader = "Basic SkRFT1JDSDp1Y2pkZTEyMw==";   // JDEORCH:ucjde123
 $(document).ready(function () {
 
     // Run the IAM + JDE preload ONLY when the page actually has a form that
-    // uses the integration. Two markers count as "uses JDE":
-    //   - a URL data source pointing at JDEURL / /jderest/orchestrator
-    //   - any reference to window.IsHR / window.CurrentUserEmail /
-    //     window.EmpDepartmentCode / window.EmpDepartmentDesc /
-    //     window.EmpName / window.EmpJobDesc  in customConditional /
-    //     customDefaultValue / calculateValue expressions.
-    //
-    // Detection is automatic — no per-form opt-in required. Forms that
-    // don't match (Inbox, Search, other apps' forms) get zero IAM/JDE
-    // traffic and the loader never fires. See attachJdeAutoBootstrap().
+  
     attachJdeAutoBootstrap();
 
     // loadTaskhistory in Application metadata
@@ -180,11 +160,6 @@ $(document).ready(function () {
 
 // ---------------------------------------------------------------------------
 // loadCurrentUserFromIAM(callback)
-//
-// Hits IAM to load only the email of the currently-logged-in user, then
-// caches it on window.CurrentUserEmail so later code paths (e.g. JDE
-// GetEmployeeInfoByEmail) don't have to refetch.
-// Pass an optional callback(email) to chain follow-up calls.
 // ---------------------------------------------------------------------------
 function loadCurrentUserFromIAM(callback) {
     // Cache: once per page, every later caller reuses the same email.
@@ -225,22 +200,6 @@ function loadCurrentUserFromIAM(callback) {
 
 // ---------------------------------------------------------------------------
 // loadIsHRFromJDE(callback)
-//
-// Chains: IAM (email) → JDE GetEmployeeInfoByEmail → window.IsHR + window.EmpDepartmentCode.
-// Reuses the IAM cache populated by loadCurrentUserFromIAM, so calling both
-// at startup costs only one IAM round-trip.
-//
-// Globals set:
-//   window.IsHR                  = boolean (from emp.IsHR)
-//   window.EmpDepartmentCode     = string  (from emp.DepartmentCode;        "" when employee not found)
-//   window.EmpDepartmentDesc     = string  (from emp.DepartmentDescription; "" when employee not found)
-// The description is stored separately so Form.io selects can pre-populate
-// their label/template via instance.selectData without waiting for the URL
-// data source to finish loading.
-//
-// Auth header is the base64 of "JDEORCH:ucjde123" — regenerate via:
-//   [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("JDEORCH:ucjde123"))
-// if you rotate the password.
 // ---------------------------------------------------------------------------
 function loadIsHRFromJDE(callback) {
     // Cache: once per page, every later caller reuses the same IsHR / DepartmentCode.
@@ -283,20 +242,6 @@ function loadIsHRFromJDE(callback) {
 
 // ---------------------------------------------------------------------------
 // attachJdeAutoBootstrap()
-//
-// Replaces the old unconditional preload. Watches Form.io for the form(s)
-// rendered on this page; when a form's schema references the JDE
-// integration — directly via JDEURL / "/jderest/orchestrator", or
-// indirectly via the globals the bootstrap populates (window.IsHR,
-// window.CurrentUserEmail, window.EmpDepartmentCode, …) — fires the
-// chain ONCE and forces every loaded form to redraw so any
-// customConditional / customDefaultValue keyed off those globals
-// re-evaluates with real values.
-//
-// Pages that don't render a JDE-using form (Inbox, Search, other apps)
-// never trigger the chain → no IAM/JDE round-trip and no loader.
-// Forms can still call loadIsHRFromJDE() / loadCurrentUserFromIAM()
-// directly if they need the data on demand.
 // ---------------------------------------------------------------------------
 function attachJdeAutoBootstrap() {
     if (window.__jdeBootstrapWatcherInstalled) return;
@@ -593,31 +538,8 @@ function ReplaceOriginalFile() {
 
 // ===========================================================================
 // Inbox custom-column functions
-//
-// Functions referenced by the "Function" field on Admin -> Nodes -> Inbox ->
-// Custom column. The Portal calls them once per row when rendering the
-// Inbox grid, passing a row object that includes documentId. Each function
-// returns the string to display in its column.
-//
-// Per the official "How to add a Custom Column to a Node" guide, the JS for
-// these functions can live either in the Parameters page Custom JavaScript
-// field OR in this CustomJs.js (both load globally). Keeping them here so
-// they're versioned in source control alongside the rest of the Portal
-// customisations.
-//
-// Convention: one function per column. Each calls the shared GetForm(row)
-// helper to fetch the case's saved formData JSON, then returns the value of
-// the matching key (empty string when missing - so cases on other workflows
-// or older cases without the field show blank cells, not "undefined").
 // ===========================================================================
 
-// ---- Asset Disposal and Sale: Approved Memo Reference ---------------------
-// Reads form.approvedMemoReference. Bound to the Inbox custom column with:
-//   Name    : approvedMemoReference
-//   Label   : Approved Memo Reference
-//   Function: ApprovedMemoReference
-// The Asset Disposal and Sale workflow's Initiation Form must have a Text
-// Field whose API Property Name is exactly "approvedMemoReference".
 function ApprovedMemoReference(row) {
     var form = GetForm(row);
     return form.approvedMemoReference ?? "";
@@ -637,11 +559,7 @@ function LPOReference(row) {
 // ---- Shared helper --------------------------------------------------------
 // Fetches the case behind a grid row and returns its formData as a parsed
 // object. The Portal stores formData as a JSON-string inside a JSON
-// response, hence the double parse (matches the pattern in the official
-// guide).
-//
-// Defined ONCE here. Any future custom-column function added to this file
-// should call GetForm(row) and NOT redefine the helper.
+
 function GetForm(row) {
     var token = window.IdentityAccessToken;
     var form  = "";
@@ -663,27 +581,6 @@ function GetForm(row) {
 
 // ===========================================================================
 // Inbox custom-column search filter
-//
-// The Portal's built-in Inbox Search panel (id="filtersContainer") only
-// exposes server-side filters (Reference Number, dates, Document Type,
-// Status, Read/Locked/Assigned/Overdue). JS-computed custom columns like
-// "Approved Memo Reference" or "Candidate Name" aren't known to the server,
-// so they can't be filtered from that panel by default.
-//
-// This block adds a labeled <input> for each custom column into the
-// existing Search panel. When the user clicks the Portal's built-in
-// "Search" button, the server-side search runs as usual and the grid
-// reloads; we then apply a client-side filter on top, hiding rows whose
-// custom-column cell doesn't contain the typed text. The Portal's "Clear"
-// button is also hooked so our inputs reset together with the rest.
-//
-// Limitation: client-side filter operates only on rows currently rendered
-// in the grid (so server pagination boundaries still apply). For true
-// cross-page search, the field would need to be added to
-// WorkflowDefinition.SearchFormInputDesigner and indexed by the Crawler.
-//
-// To add another searchable custom column, append an entry to
-// CUSTOM_SEARCH_FIELDS below.
 // ===========================================================================
 (function attachInboxCustomColumnFilter() {
     if (window.__inboxCustomColumnFilterInstalled) return;
@@ -698,19 +595,12 @@ function GetForm(row) {
         { id: "txtFilterInboxLPOReference", label: "LPO Reference", header: "LPO Reference" }
     ]; 
 
-    // When a custom filter is active, we ask the Portal for this many rows
-    // in one batch instead of the default page size. That way the client
-    // filter sees all candidate matches at once and the user doesn't have
-    // to page through manually. Trade-off: larger response payloads. 10000
-    // is enough for most user inboxes; raise if you regularly exceed it.
+    // When a custom filter is active, we ask the Portal for this many rows to solve pagination issue in custom search
+  
     var BULK_PAGE_SIZE = 10000;
 
     // URL patterns considered to be Inbox fetches. Verified against this
-    // Portal version - the Inbox grid loads via /Task/v2/ListInbox (POST
-    // with DataTables-style { start, length, ... } in the body). The regex
-    // tolerates version-bump (/Task/v1, /Task/v3) and the no-version variant.
-    // Per-row Document.Form fetches (/Document/GetSearchDocument) are
-    // intentionally EXCLUDED so they aren't rewritten.
+
     var INBOX_FETCH_URL = /\/Task\/(v\d+\/)?ListInbox\b/i;
 
     function hasActiveCustomSearch() {
@@ -721,11 +611,8 @@ function GetForm(row) {
         return false;
     }
 
-    // jQuery ajaxSend hook - rewrites the next Inbox fetch to request a
-    // bulk page size when a custom filter is active. The Portal's normal
-    // server-side filters (Reference, Status, Date range, etc.) still apply;
-    // we just ask for all matching rows in one response instead of one
-    // page at a time. Client filter then narrows the rendered set further.
+    // jQuery ajaxSend hook - rewrites the next Inbox fetch to request 
+ 
     $(document).ajaxSend(function (event, xhr, options) {
         if (!hasActiveCustomSearch()) return;
         if (!options || !options.url || !INBOX_FETCH_URL.test(options.url)) return;
