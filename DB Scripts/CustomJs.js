@@ -540,19 +540,14 @@ function ReplaceOriginalFile() {
 // Inbox custom-column functions
 // ===========================================================================
 
-function ApprovedMemoReference(row) {
-    var form = GetForm(row);
-    return form.approvedMemoReference ?? "";
-}
-
-function CandidateName(row) {
-    var form = GetForm(row);
-    return form.candidateName ?? "";
-}
+//function CandidateName(row) {
+//    var form = GetForm(row);
+//    return form.candidateName ?? "";
+//}
 
 function LPOReference(row) {
     var form = GetForm(row);
-    return form.requestReference ?? "";
+    return form.lPOReference ?? "";
 }
 
 
@@ -598,9 +593,8 @@ function GetForm(row) {
     // Each entry adds one input to the Search panel + one column-text match
     // on the grid. `label` must match the grid header text exactly (the
     // "Label" you set in Admin -> Nodes -> Inbox -> Custom column).
-    var CUSTOM_SEARCH_FIELDS = [
-        { id: "txtFilterInboxApprovedMemoReference", label: "Approved Memo Reference", header: "Approved Memo Reference" },
-        { id: "txtFilterInboxCandidateName", label: "Candidate Name", header: "Candidate Name" },
+    var CUSTOM_SEARCH_FIELDS = [        
+      /*  { id: "txtFilterInboxCandidateName", label: "Candidate Name", header: "Candidate Name" },*/
         { id: "txtFilterInboxLPOReference", label: "LPO Reference", header: "LPO Reference" }
     ]; 
 
