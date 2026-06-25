@@ -620,10 +620,50 @@ function GetForm(row) {
         return false;
     }
 
-    // jQuery ajaxSend hook - rewrites the next Inbox fetch to request 
- 
+    // --- Loader overlay shown while the bulk-page fetch is in flight -------  
+    var bulkInFlight  = 0;
+    var bulkMaskName  = "inbox-bulk-mask";
+
+    function showBulkOverlayFallback() {
+        if (!document.getElementById('inbox-bulk-loader-css')) {
+            var s = document.createElement('style');
+            s.id = 'inbox-bulk-loader-css';
+            s.textContent =
+                '#inbox-bulk-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2147483647;display:flex;align-items:center;justify-content:center;}' +
+                '#inbox-bulk-overlay .inbox-bulk-spinner{width:54px;height:54px;border:6px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:inbox-bulk-spin .9s linear infinite;}' +
+                '@keyframes inbox-bulk-spin{to{transform:rotate(360deg)}}';
+            (document.head || document.documentElement).appendChild(s);
+        }
+        if (document.getElementById('inbox-bulk-overlay')) return;
+        var ov = document.createElement('div');
+        ov.id = 'inbox-bulk-overlay';
+        ov.innerHTML = '<div class="inbox-bulk-spinner"></div>';
+        document.body.appendChild(ov);
+    }
+    function hideBulkOverlayFallback() {
+        var ov = document.getElementById('inbox-bulk-overlay');
+        if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+    }
+    function showBulkLoader() {
+        if (bulkInFlight++ > 0) return;
+        if (typeof Common !== 'undefined' && Common.mask) {
+            try { Common.mask(document.body, bulkMaskName); return; } catch (e) {}
+        }
+        showBulkOverlayFallback();
+    }
+    function hideBulkLoader() {
+        if (--bulkInFlight > 0) return;
+        bulkInFlight = 0;
+        if (typeof Common !== 'undefined' && Common.unmask) {
+            try { Common.unmask(bulkMaskName); } catch (e) {}
+        }
+        hideBulkOverlayFallback();
+    }
+
+    // jQuery ajaxSend hook - rewrites the next list-node fetch to request a
+    // bulk page size when a custom filter is active, and shows the loader
+    // overlay while it's in flight.
     $(document).ajaxSend(function (event, xhr, options) {
-        debugger;
         if (!hasActiveCustomSearch()) return;
         if (!options || !options.url || !INBOX_FETCH_URL.test(options.url)) return;
 
@@ -672,6 +712,29 @@ function GetForm(row) {
                              '$1' + '0');
             }
         }
+
+        // Show the overlay now; hide as soon as THIS specific request resolves.
+      
+        showBulkLoader();
+        var hideOnce = false;
+        function safeHide() { if (!hideOnce) { hideOnce = true; hideBulkLoader(); } }
+        if (xhr && typeof xhr.always === 'function') {
+            xhr.always(safeHide);
+        } else {
+            // jQuery shim - extremely old builds. Fall back to ajaxComplete
+            // filtered by xhr identity (still better than .one()).
+            var handler = function (e, ajaxXhr) {
+                if (ajaxXhr === xhr) {
+                    safeHide();
+                    $(document).off('ajaxComplete', handler);
+                }
+            };
+            $(document).on('ajaxComplete', handler);
+        }
+        // Safety net: if for some reason the xhr never resolves (network
+        // wedge, browser stall), force-hide after 40s so the page never
+        // stays masked indefinitely.
+        setTimeout(safeHide, 40000);
     });
 
     // Inject inputs into the Portal's Search panel. Re-runs are idempotent.
