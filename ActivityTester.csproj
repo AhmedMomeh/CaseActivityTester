@@ -32,8 +32,8 @@
        cause "Duplicate AssemblyProductAttribute" on rebuild. Same for
        None / EmbeddedResource. -->
   <ItemGroup>
-    <Compile          Remove="Shared.Activities\**" />
-    <None             Remove="Shared.Activities\**" />
+    <Compile Remove="Shared.Activities\**" />
+    <None Remove="Shared.Activities\**" />
     <EmbeddedResource Remove="Shared.Activities\**" />
   </ItemGroup>
 
@@ -139,6 +139,7 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Case Code Activity Classes\Finance\LPO Invoice\" />
+    <Folder Include="Case Code Activity Classes\HR\Probation Evaluation\" />
     <Folder Include="Case Code Activity Classes\Investment\Temporary Cash Payment\" />
   </ItemGroup>
 
