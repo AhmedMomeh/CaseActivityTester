@@ -71,10 +71,8 @@ namespace Shared.Activities
         #region Business rules
 
         /// <summary>
-        /// Routes the Probation Evaluation form based purely on whether the job
-        /// title is one of the protected "exception positions". Mirrors
-        /// CandidateSelectionForm_RouteByPositionAndGradeActivity so the two
-        /// flows use identical position-vs-grade splitting.
+        /// Routes the Probation Evaluation form by position group and grade
+        /// band combined. Three outcomes:
         ///
         ///   1. Exception positions (CEO / Chief Executive Officer /
         ///      VP - Internal Audit / Vice President - Internal Audit /
@@ -83,25 +81,28 @@ namespace Shared.Activities
         ///      branch:
         ///        -> nextApprovalRoute = "Position"
         ///
-        ///   2. Every other title takes the grade branch (grade-band routing
-        ///      happens in a downstream activity):
-        ///        -> nextApprovalRoute = "Grade"
+        ///   2. Non-exception position AND senior grade (A / B / C / D, incl.
+        ///      A1 / A2 / B2 / C2 / D1 / D2 sub-bands):
+        ///        -> nextApprovalRoute = "D/AD-HR"     (Director / Associate Director - HR)
+        ///
+        ///   3. Non-exception position AND non-senior grade (E and below,
+        ///      empty, unknown):
+        ///        -> nextApprovalRoute = "O-HR"        (Officer - HR)
         ///
         /// Title matching uses the same canonical normalization as the other
         /// HR routing activities (lowercase + strip every non-alphanumeric
-        /// char) with EXACT equality on the normalized form against
-        /// ExceptionPositionsNormalized.
+        /// char) with EXACT equality on ExceptionPositionsNormalized. Senior
+        /// matching is case-insensitive substring on A/B/C/D so all senior
+        /// sub-bands count without enumerating each variant.
         ///
         /// Inputs  (WorkflowItem.Properties):
-        ///   - DocumentId    : long
-        ///   - jobTitleText  : free-text job title
+        ///   - DocumentId      : long
+        ///   - designation    : free-text job title
+        ///   - gradeLevel  : "A".."H" or "A1", "B2" sub-bands etc.
+        ///                       (read only when position is non-exception)
         ///
         /// Output (WorkflowItem.Properties):
-        ///   - nextApprovalRoute : "Position" | "Grade"
-        ///
-        /// gradeLevelText is intentionally NOT read here - this activity's
-        /// sole responsibility is the position-vs-grade split. Grade-band
-        /// logic lives downstream on the "Grade" branch.
+        ///   - nextApprovalRoute : "Position" | "D/AD-HR" | "O-HR"
         /// </summary>
         #endregion
 
@@ -130,8 +131,17 @@ namespace Shared.Activities
             "n1leadership"
         };
 
-        private const string RoutePosition = "Position";
-        private const string RouteGrade    = "Grade";
+        // Senior grades route to D/AD-HR (Director / Associate Director - HR)
+        // on the non-exception branch. Matched with Contains, so "A", "A1",
+        // "A2", "B", "B2", "C", "C2", "D", "D1", "D2" all count as senior
+        // while "E", "E1", "F", "F2", "G", "H" don't. A future grade letter
+        // not listed here (e.g. "I", "J") automatically falls through to the
+        // O-HR (Officer - HR) route without a code change.
+        private static readonly string[] SeniorGrades = { "A", "B", "C", "D" };
+
+        private const string RoutePosition             = "Position";
+        private const string RouteDirectorOrAssociateHR = "HRDirector";
+        private const string RouteOfficerHR             = "HROfficer";
 
         public override void Execute(WorkflowItem workflowItem)
         {
@@ -145,9 +155,7 @@ namespace Shared.Activities
 
             try
             {
-                string position = GetProp(workflowItem, "jobTitleText");
-
-                LogInfo($"Input: jobTitle='{position}'");
+                string position = GetProp(workflowItem, "designation");
 
                 string nextApprovalRoute;
                 if (IsExceptionPosition(position))
@@ -156,17 +164,25 @@ namespace Shared.Activities
                     // Vice President - Internal Audit / Board Office Manager /
                     // Manager - Board Office / Manager - CEO Office /
                     // N-1 Leadership - take the position-first path.
+                    LogInfo($"Input: jobTitle='{position}'");
                     nextApprovalRoute = RoutePosition;
                     LogInfo($"Exception position '{position}' matched -> routing via {RoutePosition}.");
                 }
                 else
                 {
-                    // Anything else - take the grade-first path. Grade-band
-                    // routing happens downstream.
-                    nextApprovalRoute = RouteGrade;
+                    // Non-exception position - decide between D/AD-HR and O-HR
+                    // by grade band. Senior (A-D incl. sub-bands) -> Director /
+                    // Associate Director - HR; everything else -> Officer - HR.
+                    string grade   = GetProp(workflowItem, "gradeLevel");
+                    bool   isSenior = IsSenior(grade);
 
-                    if (string.IsNullOrWhiteSpace(position))
-                        LogWarn($"jobTitleText is empty - defaulting to {RouteGrade}.");
+                    LogInfo($"Input: jobTitle='{position}', gradeLevel='{grade}', isSenior={isSenior}");
+
+                    nextApprovalRoute = isSenior ? RouteDirectorOrAssociateHR : RouteOfficerHR;
+                    LogInfo($"Non-exception position - {(isSenior ? "senior" : "non-senior")} grade -> routing via {nextApprovalRoute}.");
+
+                    if (string.IsNullOrWhiteSpace(grade))
+                        LogWarn($"gradeLevel is empty - defaulting to {RouteOfficerHR}.");
                 }
 
                 SetProp(workflowItem, "nextApprovalRoute", nextApprovalRoute);
@@ -213,6 +229,18 @@ namespace Shared.Activities
             if (string.IsNullOrWhiteSpace(title)) return false;
             string norm = Normalize(title);
             foreach (var x in ExceptionPositionsNormalized) if (x == norm) return true;
+            return false;
+        }
+
+        // Case-insensitive, substring-based: "A", "A1", "B2", "C2", "D",
+        // "D1", "D2", "Grade-A", "  d  " all match. "E", "F2", "G", "H" don't.
+        // Same matcher used by CandidateSelectionForm_RouteByGradeActivity and
+        // the rest of the HR routing activities - keep in sync.
+        private static bool IsSenior(string g)
+        {
+            if (string.IsNullOrWhiteSpace(g)) return false;
+            string up = g.ToUpperInvariant();
+            foreach (var s in SeniorGrades) if (up.Contains(s)) return true;
             return false;
         }
 
