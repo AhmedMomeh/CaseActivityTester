@@ -216,6 +216,60 @@ namespace ActivityTester.JdeMock.Services
                 },
             };
 
+        // -------- Employees by StaffID (used by the GetEmployeeInfo endpoint) --------
+        // The staging sample uses StaffID "1451317" -> "MUHAMMAD HASSAN MUHAMMAD ALI"
+        // as the canonical happy-path test fixture; seeded here so test calls
+        // against the mock return the same payload the staging endpoint does.
+        // Anything else returns the JDE "not found" sentinel (literal "null"
+        // strings for text/date fields, JSON null only for ProbationDate).
+        private readonly Dictionary<string, GetEmployeeInfoResponse> _knownStaff =
+            new(System.StringComparer.OrdinalIgnoreCase)
+            {
+                ["1451317"] = new GetEmployeeInfoResponse
+                {
+                    EmployeeName          = "MUHAMMAD HASSAN MUHAMMAD ALI",
+                    Designation           = "HR099",
+                    DesignationDesc       = "Lead - HR Systems",
+                    DOJ                   = "08/10/2024",
+                    DepartmentOrBranch    = "101HRA",
+                    DepartmentOrBranchName= "People & Culture Department",
+                    DateInCurrentPosition = "08/10/2024",
+                    GradeLevel            = "F1",
+                    Grade                 = "F",
+                    ProbationDate         = null,
+                },
+                // Extra fixtures for variety in local testing - one HR senior
+                // (under probation) and one IT senior - so the routing
+                // activities exercise both branches without hand-crafting
+                // payloads in tools.
+                ["11"] = new GetEmployeeInfoResponse
+                {
+                    EmployeeName          = "AHMED ALI AL MARZOOQI",
+                    Designation           = "IT001",
+                    DesignationDesc       = "Chief Information Officer",
+                    DOJ                   = "01/03/2010",
+                    DepartmentOrBranch    = "101IT",
+                    DepartmentOrBranchName= "Information Technology Dept.",
+                    DateInCurrentPosition = "01/03/2025",
+                    GradeLevel            = "A1",
+                    Grade                 = "A",
+                    ProbationDate         = null,
+                },
+                ["22"] = new GetEmployeeInfoResponse
+                {
+                    EmployeeName          = "SARA AHMED AL HASHMI",
+                    Designation           = "HR050",
+                    DesignationDesc       = "HR Officer",
+                    DOJ                   = "15/03/2026",
+                    DepartmentOrBranch    = "101HR",
+                    DepartmentOrBranchName= "Human Resources Dept.",
+                    DateInCurrentPosition = "15/03/2026",
+                    GradeLevel            = "F2",
+                    Grade                 = "F",
+                    ProbationDate         = "15/09/2026",   // still under probation
+                },
+            };
+
         // -------- Public API --------
 
         // CompanyFilter is accepted but currently doesn't filter — the seed
@@ -269,6 +323,44 @@ namespace ActivityTester.JdeMock.Services
                 DepartmentCode = "",
                 DepartmentDescription = "null",
                 IsHR = false,
+            };
+        }
+
+        // Returns the employee record by StaffID, or the JDE "not found"
+        // sentinel: string fields set to the literal "null" (not JSON null),
+        // ProbationDate set to actual JSON null. Mirrors production JDE.
+        public GetEmployeeInfoResponse GetEmployeeInfo(string staffId)
+        {
+            if (!string.IsNullOrEmpty(staffId) && _knownStaff.TryGetValue(staffId, out var hit))
+            {
+                // Don't return the cached instance directly — callers mutate jde__ timestamps.
+                return new GetEmployeeInfoResponse
+                {
+                    EmployeeName          = hit.EmployeeName,
+                    Designation           = hit.Designation,
+                    DesignationDesc       = hit.DesignationDesc,
+                    DOJ                   = hit.DOJ,
+                    DepartmentOrBranch    = hit.DepartmentOrBranch,
+                    DepartmentOrBranchName= hit.DepartmentOrBranchName,
+                    DateInCurrentPosition = hit.DateInCurrentPosition,
+                    GradeLevel            = hit.GradeLevel,
+                    Grade                 = hit.Grade,
+                    ProbationDate         = hit.ProbationDate,
+                };
+            }
+
+            return new GetEmployeeInfoResponse
+            {
+                EmployeeName          = "null",
+                Designation           = "null",
+                DesignationDesc       = "null",
+                DOJ                   = "null",
+                DepartmentOrBranch    = "",
+                DepartmentOrBranchName= "null",
+                DateInCurrentPosition = "null",
+                GradeLevel            = "null",
+                Grade                 = "null",
+                ProbationDate         = null,   // ProbationDate is real JSON null in JDE
             };
         }
     }

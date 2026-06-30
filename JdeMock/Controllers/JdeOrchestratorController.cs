@@ -107,6 +107,38 @@ namespace ActivityTester.JdeMock.Controllers
         }
 
         // -------------------------------------------------------------------
+        // POST /jderest/orchestrator/GetEmployeeInfo
+        //   Request:  { "StaffID": "1451317" }
+        //   Response: { "EmployeeName":..., "Designation":..., "DesignationDesc":...,
+        //               "DOJ":..., "DepartmentOrBranch":..., "DepartmentOrBranchName":...,
+        //               "DateInCurrentPosition":..., "GradeLevel":..., "Grade":...,
+        //               "ProbationDate":null, "jde__status":"SUCCESS", ... }
+        // Unknown StaffIDs get the JDE "not found" sentinel: string fields
+        // set to the literal "null" string (NOT JSON null) for text and
+        // dd/MM/yyyy date fields, ProbationDate set to actual JSON null
+        // (matches the production "no probation" wire shape).
+        // -------------------------------------------------------------------
+        [HttpPost("GetEmployeeInfo")]
+        public async Task<ActionResult<GetEmployeeInfoResponse>> GetEmployeeInfo(
+            [FromBody] GetEmployeeInfoRequest request)
+        {
+            var start = JdeTime.NowUae();
+            _log.LogInformation(
+                "GetEmployeeInfo received  StaffID='{StaffID}'",
+                request?.StaffID);
+
+            await SimulateLatencyAsync(nameof(GetEmployeeInfo));
+
+            var resp = _data.GetEmployeeInfo(request?.StaffID);
+            resp.SetTimings(start, JdeTime.NowUae());
+
+            _log.LogInformation(
+                "GetEmployeeInfo returned  StaffID='{StaffID}' EmployeeName='{Name}' Grade='{Grade}'  in {Seconds:N3}s",
+                request?.StaffID, resp.EmployeeName, resp.GradeLevel, resp.ServerExecutionSeconds);
+            return Ok(resp);
+        }
+
+        // -------------------------------------------------------------------
         // POST /jderest/orchestrator/GetJobsList
         //   Request:  { "DepartmentFilter": "101IT" }
         //   Response: { "JobsList": [...], "jde__status":"SUCCESS", ... }
