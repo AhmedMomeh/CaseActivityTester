@@ -6,7 +6,7 @@ using System.Globalization;
 
 namespace Shared.Activities
 {
-    public class LPO_LocalPurchaseOrder_RouteByAmountActivity : ActivityTemplate
+    public class LPO_RouteByAmountAndTypeActivity : ActivityTemplate
     {
         // Final approval rules:
         //   Contract        -> CBSO only (already done)           -> "Direct"
